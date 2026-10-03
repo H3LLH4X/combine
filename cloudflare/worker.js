@@ -107,7 +107,7 @@ function evaluateExpression(tokens) {
       expectValue = false;
     } else if (t.type === 'op') {
       if (expectValue) return {valid:false,error:'Operator cannot appear here.'};
-      while (ops.length && ops.at(-1) !== '(' && precedence(ops.at(-1)) >= precedence(t.value)) {
+      while (ops.length && ops[ops.length-1] !== '(' && precedence(ops.at(-1)) >= precedence(t.value)) {
         if (!apply()) return {valid:false,error:'Invalid expression.'};
       }
       ops.push(t.value);
@@ -118,10 +118,10 @@ function evaluateExpression(tokens) {
       depth += 1;
     } else if (t.type === ')') {
       if (expectValue || depth <= 0) return {valid:false,error:'Unbalanced parentheses.'};
-      while (ops.length && ops.at(-1) !== '(') {
+      while (ops.length && ops[ops.length-1] !== '(') {
         if (!apply()) return {valid:false,error:'Invalid expression.'};
       }
-      if (ops.at(-1) !== '(') return {valid:false,error:'Unbalanced parentheses.'};
+      if (ops[ops.length-1] !== '(') return {valid:false,error:'Unbalanced parentheses.'};
       ops.pop();
       depth -= 1;
       expectValue = false;
@@ -560,15 +560,14 @@ export class CombineRoom extends DurableObject {
         return this.socketError(ws, evaluated.valid ? `Expression equals ${evaluated.value}; target is ${this.room.roundState.target}.` : evaluated.error);
       }
 
+      const challenge = this.room.dhappa;
+      const actualCaller = this.player(submittingPlayerId);
+      const target = this.player(expressionPlayerId);
       this.room.dhappa = null;
       this.room.roundState.drawnThisTurn = false;
       this.room.turnStartedAt = null;
 
       if (mode === 'callout') {
-        const caller = this.player(this.room.dhappa?.callerId || submittingPlayerId);
-        const target = this.player(expressionPlayerId);
-        // `caller` is resolved from the submitter because the challenge object was cleared.
-        const actualCaller = this.player(submittingPlayerId);
         if (!actualCaller || !actualCaller.alive || !target || !target.alive) return this.socketError(ws,'The player state changed before resolution.');
         this.awardKick(actualCaller, target);
         await this.eliminateAndAdvance(target.id, actualCaller.id, false);

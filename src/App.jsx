@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import QRCode from 'qrcode';
+import React, { useEffect, useRef, useState } from 'react';
 import './styles.css';
 
 const WS_PATH = '/ws';
 // Default production multiplayer backend. VITE_WS_URL overrides this for another deployment.
 const DEFAULT_SERVER_BASE = 'https://combine.clockcombine.workers.dev';
-const WS_BASE = (import.meta.env.VITE_WS_URL || DEFAULT_SERVER_BASE).replace(/\/$/, '');
+const WS_BASE = String(import.meta.env.VITE_WS_URL || DEFAULT_SERVER_BASE).replace(/\/$/, '');
 const PLACE_POINTS = [5,3,2,1,1];
 const UI_SETTINGS_KEY = 'combine-ui-settings';
 const DEFAULT_UI = {
@@ -49,59 +48,130 @@ function MatrixRain({enabled}){
     const canvas=ref.current;
     if(!canvas) return;
     const ctx=canvas.getContext('2d');
-    if(!ctx) return;
+    if(!ctx || typeof ctx.fillRect!=='function' || typeof ctx.fillText!=='function') return;
+    const requestFrame=window.requestAnimationFrame?.bind(window);
+    const cancelFrame=window.cancelAnimationFrame?.bind(window);
+    if(typeof requestFrame!=='function' || typeof cancelFrame!=='function') return;
+
     const chars='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/=()';
-    let raf=0; let columns=0; let drops=[]; let width=0; let height=0;
+    let raf=0;
+    let width=0;
+    let height=0;
+    let dpr=1;
+    let glyphs=[];
+    let lastChange=0;
+
+    const randomChar=()=>chars[(Math.random()*chars.length)|0];
+    const randomSize=()=>48 + Math.random()*74;
+    const randomSpeed=0.8 + Math.random()*1.8;
+
+    const seedGlyphs=()=>{
+      const count=Math.max(26, Math.min(76, Math.round((width*height)/19000)));
+      glyphs=Array.from({length:count},(_,i)=>({
+        x:Math.random()*(width+420)-210,
+        y:Math.random()*(height+420)-210,
+        size:randomSize(),
+        speed:randomSpeed(),
+        char:randomChar(),
+        age:Math.random()*1000+i*17,
+        phase:Math.random()*Math.PI*2,
+        alpha:0.10+Math.random()*0.22,
+        hue:185+Math.random()*120,
+      }));
+    };
+
     const resize=()=>{
-      const dpr=Math.min(window.devicePixelRatio||1,2);
-      width=window.innerWidth; height=window.innerHeight;
-      canvas.width=Math.floor(width*dpr); canvas.height=Math.floor(height*dpr);
-      canvas.style.width=`${width}px`; canvas.style.height=`${height}px`;
-      ctx.setTransform(dpr,0,0,dpr,0,0);
-      ctx.font='14px monospace';
-      columns=Math.ceil(width/14);
-      drops=Array.from({length:columns},()=>Math.random()*height/14);
+      dpr=Math.min(window.devicePixelRatio||1,2);
+      width=window.innerWidth;
+      height=window.innerHeight;
+      canvas.width=Math.floor(width*dpr);
+      canvas.height=Math.floor(height*dpr);
+      canvas.style.width=`${width}px`;
+      canvas.style.height=`${height}px`;
+      if(typeof ctx.setTransform==='function') ctx.setTransform(dpr,0,0,dpr,0,0);
+      seedGlyphs();
     };
-    const frame=()=>{
-      ctx.fillStyle='rgba(5, 2, 18, 0.075)';
-      ctx.fillRect(0,0,width,height);
-      ctx.font='14px monospace';
-      for(let i=0;i<columns;i++){
-        const x=i*14;
-        const y=drops[i]*14;
-        const ch=chars[(Math.random()*chars.length)|0];
-        const hue=175 + ((i*13 + Math.floor(y/14))%120);
-        ctx.fillStyle=`hsla(${hue}, 100%, 70%, .82)`;
-        ctx.fillText(ch,x,y);
-        if(y>height+30 && Math.random()>.975) drops[i]=0;
-        drops[i]+=0.46 + Math.random()*.5;
+
+    const wrapGlyph=(g)=>{
+      if(g.x>width+260 || g.y>height+260){
+        g.x=Math.random()*width-320;
+        g.y=-220-Math.random()*220;
+        g.size=randomSize();
+        g.speed=randomSpeed();
       }
-      raf=requestAnimationFrame(frame);
     };
+
+    const frame=(now)=>{
+      ctx.fillStyle='rgba(5, 2, 18, 0.13)';
+      ctx.fillRect(0,0,width,height);
+
+      // Large diagonal glyphs sweep from top-left toward bottom-right.
+      ctx.save();
+      ctx.translate(width/2,height/2);
+      ctx.rotate(-0.24);
+      ctx.translate(-width/2,-height/2);
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+
+      if(now-lastChange>85){
+        for(const g of glyphs){
+          if(Math.random()<0.72) g.char=randomChar();
+          if(Math.random()<0.18) g.size=randomSize();
+          g.hue=175+Math.random()*145;
+        }
+        lastChange=now;
+      }
+
+      for(const g of glyphs){
+        g.age+=1;
+        g.x += g.speed*1.35;
+        g.y += g.speed*0.88;
+        wrapGlyph(g);
+
+        const pulse=0.82+0.18*Math.sin(g.age*0.08+g.phase);
+        ctx.font=`900 ${Math.round(g.size)}px monospace`;
+        ctx.shadowBlur=20;
+        ctx.shadowColor=`hsla(${g.hue},100%,70%,${g.alpha*1.8})`;
+        ctx.fillStyle=`hsla(${g.hue},100%,70%,${g.alpha*pulse})`;
+        ctx.fillText(g.char,g.x,g.y);
+      }
+      ctx.restore();
+
+      raf=requestFrame(frame);
+    };
+
     resize();
     window.addEventListener('resize',resize);
-    ctx.fillStyle='#050212'; ctx.fillRect(0,0,width,height);
-    raf=requestAnimationFrame(frame);
-    return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize)};
+    ctx.fillStyle='#050212';
+    ctx.fillRect(0,0,width,height);
+    raf=requestFrame(frame);
+
+    return()=>{
+      cancelFrame(raf);
+      window.removeEventListener('resize',resize);
+    };
   },[enabled]);
+
   if(!enabled) return null;
-  return <canvas ref={ref} className="matrixRain" aria-hidden="true"/>;
+  return <canvas ref={ref} className="matrixRain diagonalGlyphs" aria-hidden="true"/>;
 }
 
 class AppErrorBoundary extends React.Component {
-  constructor(props){super(props);this.state={error:null}}
+  constructor(props){super(props);this.state={error:null,stack:''}}
   static getDerivedStateFromError(error){return {error}}
-  componentDidCatch(error){console.error('Combine UI error:',error)}
+  componentDidCatch(error,info){this.setState({stack:info?.componentStack||''});console.error('Combine UI error:',error,info?.componentStack)}
   render(){
     if(this.state.error){
-      return <div className="fatalError"><div className="fatalCard"><div className="eyebrow">COMBINE ERROR</div><h1>SCREEN COULD NOT RENDER</h1><p>{this.state.error?.message || 'Unknown error'}</p><button className="primary" onClick={()=>location.reload()}>RELOAD</button></div></div>;
+      const reset=()=>{try{localStorage.removeItem('combine-session')}catch{} location.reload()};
+      return <div className="fatalError"><div className="fatalCard"><div className="eyebrow">COMBINE ERROR</div><h1>SCREEN COULD NOT RENDER</h1><p>{this.state.error?.message || 'Unknown error'}</p><details><summary>Technical details</summary><pre style={{whiteSpace:'pre-wrap',maxHeight:180,overflow:'auto'}}>{String(this.state.stack||this.state.error?.stack||'')}</pre></details><div style={{display:'grid',gap:8}}><button className="primary" onClick={()=>location.reload()}>RELOAD</button><button className="secondary" onClick={reset}>RESET ROOM SESSION</button></div></div></div>;
     }
     return this.props.children;
   }
 }
 
-function formatTime(s){const n=Math.max(0,Math.floor(Number(s)||0));return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
-function evalLocal(cards){
+function formatTime(s){const n=Math.max(0,Math.floor(Number(s)||0));return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`};
+function evalLocal(input){
+  const cards=Array.isArray(input)?input:[];
   let joined='';
   for(const c of cards) joined += c;
   if(!/[0-9]/.test(joined) || !/[+\-*/]/.test(joined)) return null;
@@ -109,7 +179,7 @@ function evalLocal(cards){
   const toks=[]; let num=''; const flush=()=>{if(num){toks.push(Number(num));num=''}};
   for(const c of cards){if(/^\d$/.test(c))num+=c;else{flush();toks.push(c)}} flush();
   const vals=[],ops=[]; const prec={'+':1,'-':1,'*':2,'/':2}; const apply=()=>{const b=vals.pop(),a=vals.pop(),op=ops.pop();if(op==='+')vals.push(a+b);else if(op==='-')vals.push(a-b);else if(op==='*')vals.push(a*b);else{if(b===0)throw Error();vals.push(a/b)}};
-  try{for(const t of toks){if(typeof t==='number')vals.push(t);else{while(ops.length&&prec[ops.at(-1)]>=prec[t])apply();ops.push(t)}}while(ops.length)apply();return vals.length===1&&Number.isFinite(vals[0])?vals[0]:null}catch{return null}
+  try{for(const t of toks){if(typeof t==='number')vals.push(t);else{while(ops.length&&prec[ops[ops.length-1]]>=prec[t])apply();ops.push(t)}}while(ops.length)apply();return vals.length===1&&Number.isFinite(vals[0])?vals[0]:null}catch{return null}
 }
 
 function getHttpServerBase(){
@@ -117,6 +187,39 @@ function getHttpServerBase(){
 }
 function getWsServerBase(){
   return WS_BASE.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
+}
+
+function normalizeState(raw){
+  if(!raw || typeof raw !== 'object') return null;
+  const players=Array.isArray(raw.players) ? raw.players.map((p,i)=>({
+    id:String(p?.id ?? `player-${i}`),
+    name:String(p?.name ?? `Player ${i+1}`),
+    color:String(p?.color ?? '#ff4fd8'),
+    score:Number.isFinite(Number(p?.score)) ? Number(p.score) : 0,
+    roundScore:Number.isFinite(Number(p?.roundScore)) ? Number(p.roundScore) : 0,
+    alive:p?.alive !== false,
+    hand:Array.isArray(p?.hand) ? p.hand.map(x=>String(x)) : [],
+    remainingTime:Number.isFinite(Number(p?.remainingTime)) ? Number(p.remainingTime) : 0,
+    online:p?.online !== false,
+  })) : [];
+  const rs=raw.roundState && typeof raw.roundState==='object' ? raw.roundState : null;
+  return {
+    ...raw,
+    players,
+    settings:raw.settings && typeof raw.settings==='object' ? raw.settings : {targetScore:11,playerSeconds:120,dhappaSeconds:30,direction:'counterclockwise'},
+    roundState:rs ? {
+      ...rs,
+      target:Number.isFinite(Number(rs.target)) ? Number(rs.target) : 0,
+      targetCards:Array.isArray(rs.targetCards) ? rs.targetCards : [],
+      events:Array.isArray(rs.events) ? rs.events : [],
+      drawnThisTurn:Boolean(rs.drawnThisTurn),
+      finishCount:Number.isFinite(Number(rs.finishCount)) ? Number(rs.finishCount) : 0,
+    } : null,
+    dhappa:raw.dhappa && typeof raw.dhappa==='object' ? {
+      ...raw.dhappa,
+      seconds:Number.isFinite(Number(raw.dhappa.seconds)) ? Number(raw.dhappa.seconds) : 30,
+    } : null,
+  };
 }
 
 function useGameSocket(){
@@ -188,7 +291,7 @@ function useGameSocket(){
           if(m.type==='state') {
             const receivedAt=Date.now();
             if(Number.isFinite(m.state?.serverNow)) setServerOffset(m.state.serverNow-receivedAt);
-            setState(m.state);
+            setState(normalizeState(m.state));
           }
           else if(m.type==='error') setMessages(x=>[m.message,...x].slice(0,4));
           else if(m.type==='left') clearSession();
@@ -222,7 +325,7 @@ function useGameSocket(){
         const data=await api('/api/create',{name:msg.name,settings:msg.settings});
         const next={roomCode:data.roomCode,playerId:data.playerId};
         localStorage.setItem('combine-session',JSON.stringify(next));
-        sessionRef.current=next; setSession(next); if(data.state)setState(data.state);
+        sessionRef.current=next; setSession(next); if(data.state)setState(normalizeState(data.state));
         await connectToSession(next);
       }catch(e){setMessages(x=>[e.message,...x].slice(0,4));}
       return;
@@ -232,7 +335,7 @@ function useGameSocket(){
         const data=await api('/api/join',{name:msg.name,code:String(msg.code||'').toUpperCase()});
         const next={roomCode:String(msg.code||'').toUpperCase(),playerId:data.playerId};
         localStorage.setItem('combine-session',JSON.stringify(next));
-        sessionRef.current=next; setSession(next); if(data.state)setState(data.state);
+        sessionRef.current=next; setSession(next); if(data.state)setState(normalizeState(data.state));
         await connectToSession(next);
       }catch(e){setMessages(x=>[e.message,...x].slice(0,4));}
       return;
@@ -244,7 +347,7 @@ function useGameSocket(){
         const data=await api('/api/rejoin',{code,playerId});
         const next={roomCode:code,playerId:data.playerId};
         localStorage.setItem('combine-session',JSON.stringify(next));
-        sessionRef.current=next; setSession(next); if(data.state)setState(data.state);
+        sessionRef.current=next; setSession(next); if(data.state)setState(normalizeState(data.state));
         await connectToSession(next);
       }catch(e){
         if(/not found/i.test(e.message)){clearSession();}
@@ -291,17 +394,24 @@ function CombineApp(){
         gain.gain.setValueAtTime(Math.max(.015,ui.volume*.045),ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.045);
         osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+.05);
-        setTimeout(()=>ctx.close?.(),100);
+        setTimeout(()=>{try{if(typeof ctx.close==='function') ctx.close();}catch{}},100);
       }catch{}
     };
     document.addEventListener('click',click,true);
     return()=>document.removeEventListener('click',click,true);
   },[ui.sound,ui.volume]);
   const clockNow=localNow+serverOffset;
-  const me=state?.players?.find(p=>p.id===state.me); const active=state?.players?.find(p=>p.id===state.roundState?.activeId); const isMyTurn=!!me&&!!active&&me.id===active.id;
-  const challengeTarget=state?.dhappa ? (state.players.find(p=>p.id===state.dhappa.targetId) || (state.dhappa.mode==='attempt' ? me : null)) : null;
-  const caller=state?.dhappa?state.players.find(p=>p.id===state.dhappa.callerId):null;
-  const sorted=[...(state?.players||[])].sort((a,b)=>b.score-a.score);
+  const players=Array.isArray(state?.players) ? state.players : [];
+  const me=players.find(p=>p.id===state?.me) || null;
+  const active=players.find(p=>p.id===state?.roundState?.activeId) || null;
+  const isMyTurn=!!me&&!!active&&me.id===active.id;
+  const challengeTarget=state?.dhappa ? (players.find(p=>p.id===state.dhappa.targetId) || (state.dhappa.mode==='attempt' ? me : null)) : null;
+  const caller=state?.dhappa ? players.find(p=>p.id===state.dhappa.callerId) || null : null;
+  const sorted=[...players].sort((a,b)=>(b.score??0)-(a.score??0));
+  const myHand=Array.isArray(me?.hand)?me.hand:[];
+  const safeSelected=Array.isArray(selected)?selected.filter(i=>Number.isInteger(i)&&i>=0&&i<myHand.length):[];
+  const selectedCards=safeSelected.map(i=>myHand[i]);
+  const liveValue=safeSelected.length?evalLocal(selectedCards):null;
   function displayRemaining(p){
     if(!p||!state?.roundState) return 0;
     if(p.id===state.roundState.activeId && state.roundState.turnDeadlineAt && state.phase==='turn' && !state.dhappa){
@@ -320,19 +430,32 @@ function CombineApp(){
     else if(state?.phase==='turn'||state?.phase==='roundSummary'||state?.phase==='gameOver')setView(state.phase);
   },[state?.phase,state,session]);
   useEffect(()=>{ const room=new URLSearchParams(window.location.search).get('room'); if(room) setRoomCode(room.toUpperCase()); },[]);
+  // HTTP fallback keeps the lobby synchronized even if a WebSocket broadcast is delayed.
+  useEffect(()=>{
+    if(view!=='lobby' || !session?.roomCode || !session?.playerId) return;
+    let stopped=false;
+    const refresh=async()=>{
+      try{
+        const res=await fetch(`${getHttpServerBase()}/api/rejoin`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:session.roomCode,playerId:session.playerId})});
+        const data=await res.json().catch(()=>({}));
+        if(!stopped && res.ok && data?.state) setState(normalizeState(data.state));
+      }catch{}
+    };
+    refresh();
+    const id=setInterval(refresh,1200);
+    return()=>{stopped=true;clearInterval(id)};
+  },[view,session?.roomCode,session?.playerId]);
 
   async function createRoom(){await send({type:'createRoom',name,settings});}
   async function joinRoom(){await send({type:'joinRoom',code:roomCode.trim().toUpperCase(),name});}
   async function startGame(){await send({type:'startGame'});}
   function act(type,payload={}){send({type,...payload})}
-  function toggleSelected(i){setSelected(s=>s.includes(i)?s.filter(x=>x!==i):[...s,i])}
-  function toggleChallenge(i){setChallengeSelected(s=>s.includes(i)?s.filter(x=>x!==i):[...s,i])}
+  function toggleSelected(i){setSelected(s=>{const cur=Array.isArray(s)?s:[];return cur.includes(i)?cur.filter(x=>x!==i):[...cur,i]})}
+  function toggleChallenge(i){setChallengeSelected(s=>{const cur=Array.isArray(s)?s:[];return cur.includes(i)?cur.filter(x=>x!==i):[...cur,i]})}
   function undoSelected(){setSelected(s=>s.slice(0,-1));setExpressionError('')}
   function clearSelected(){setSelected([]);setExpressionError('')}
   function undoChallenge(){setChallengeSelected(s=>s.slice(0,-1));setExpressionError('')}
   function clearChallenge(){setChallengeSelected([]);setExpressionError('')}
-  function submitExpression(indices,targetHand){const cards=indices.map(i=>targetHand[i]);const value=evalLocal(cards); if(value===null){setExpressionError('Invalid expression. Use at least one number and one operator.');return false} if(Math.abs(value-(state.roundState.target))>1e-9){setExpressionError(`Expression = ${value}; target = ${state.roundState.target}.`);return false}setExpressionError('');return true}
-
   // After leaving, the socket clears state asynchronously. Never render a room
   // view with null state during that transition; go straight back to the menu.
   if(view==='menu' || !state) return <div className="menuShell" style={getShellStyle(ui)}>
@@ -359,7 +482,7 @@ function CombineApp(){
     <main className="game">
       <section className="board">
         <div className="roundInfo">ROUND {state.round} · GLOBAL TARGET <b>{state.settings.targetScore}</b></div>
-        <div className="targetCard"><span>ROUND TARGET</span><strong>{state.roundState.target}</strong><small>{state.roundState.targetCards.join(' + ')}</small></div>
+        <div className="targetCard"><span>ROUND TARGET</span><strong>{roundState.target}</strong><small>{state.roundState.targetCards.join(' + ')}</small></div>
         <div className="activeLine"><div className="activeName" style={{color:active?.color}}>{active?.name?.toUpperCase()}'S TURN</div><div className="bigTimer">{formatTime(displayRemaining(active))}</div></div>
         <div className="decks">
           <button className="deck number" disabled={!isMyTurn||state.roundState.drawnThisTurn||!state.roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}><span>NUMBER</span><b>DRAW</b><small>{state.roundState.numberCardsLeft} LEFT</small></button>
@@ -367,17 +490,17 @@ function CombineApp(){
         </div>
         <div className="handWrap">
           <div className="sectionHead"><span>{me?.name?.toUpperCase()}'S PUBLIC HAND</span><span>{me?.hand?.length||0} CARDS · {state.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE'}</span></div>
-          <div className="hand">{me?.hand?.map((c,i)=><button key={i} disabled={!isMyTurn||!!state.dhappa} onClick={()=>toggleSelected(i)} className={`card ${/\d/.test(c)?'num':'op'} ${selected.includes(i)?'sel':''}`}>{c}</button>)}{!me?.hand?.length&&<div className="empty">No cards yet.</div>}</div>
-          <div className="expression"><span>{selected.length?selected.map(i=>me.hand[i]).join(' '):'SELECT CARDS TO BUILD'}</span><div className="exprActions"><button className="smallBtn" disabled={!selected.length} onClick={undoSelected}>UNDO</button><button className="smallBtn" disabled={!selected.length} onClick={clearSelected}>CLEAR</button><button disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa||!selected.length} onClick={()=>{setExpressionError('');act('attempt')}}>ATTEMPT</button></div></div>
-          {selected.length>0&&<div className={`liveResult ${evalLocal(selected.map(i=>me.hand[i]))===null?'bad':''}`}>
-            {evalLocal(selected.map(i=>me.hand[i]))===null ? 'INVALID EXPRESSION' : `= ${evalLocal(selected.map(i=>me.hand[i]))}`}
+          <div className="hand">{myHand.map((c,i)=><button key={i} disabled={!isMyTurn||!!state.dhappa} onClick={()=>toggleSelected(i)} className={`card ${/\d/.test(c)?'num':'op'} ${selected.includes(i)?'sel':''}`}>{c}</button>)}{!me?.hand?.length&&<div className="empty">No cards yet.</div>}</div>
+          <div className="expression"><span>{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</span><div className="exprActions"><button className="smallBtn" disabled={!safeSelected.length} onClick={undoSelected}>UNDO</button><button className="smallBtn" disabled={!safeSelected.length} onClick={clearSelected}>CLEAR</button><button disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa||!safeSelected.length} onClick={()=>{setExpressionError('');act('attempt')}}>ATTEMPT</button></div></div>
+          {safeSelected.length>0&&<div className={`liveResult ${liveValue===null?'bad':''}`}>
+            {liveValue===null ? 'INVALID EXPRESSION' : `= ${liveValue}`}
           </div>}
           {expressionError&&<div className="err">{expressionError}</div>}
         </div>
         <div className="publicTable">
           <div className="sectionHead"><span>ALL PUBLIC HANDS</span><span>EVERY PLAYER CAN SEE EVERY CARD</span></div>
           <div className="publicHands">
-            {state.players.map(p=><div className={`publicPlayer ${p.id===active?.id?'isActive':''} ${!p.alive?'isOut':''}`} key={p.id}>
+            {players.map(p=><div className={`publicPlayer ${p.id===active?.id?'isActive':''} ${!p.alive?'isOut':''}`} key={p.id}>
               <div className="publicPlayerHead"><span><i style={{background:p.color}}></i><b>{p.name}</b>{p.id===active?.id?' · PLAYING':''}</span><em>{p.hand.length} CARDS</em></div>
               <div className="publicCards">{p.hand.length?p.hand.map((c,i)=><span key={i} className={`miniCard ${/\d/.test(c)?'num':'op'}`}>{c}</span>):<span className="noCards">EMPTY</span>}</div>
             </div>)}
@@ -386,14 +509,14 @@ function CombineApp(){
         <div className="controls">
           <button className="pass" disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setSelected([]);act('pass')}}>PASS</button>
           <button className="attempt" disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setChallengeSelected([]);setExpressionError('');act('attempt')}}>ATTEMPT</button>
-          <button className="dhappa" disabled={!isMyTurn||state.players.filter(p=>p.alive&&p.id!==me.id).length===0||!!state.dhappa} onClick={()=>{setTargetPick(state.players.filter(p=>p.alive&&p.id!==me.id).map(p=>p.id));setSelected([]);setExpressionError('')}}>DHAPPA</button>
+          <button className="dhappa" disabled={!isMyTurn||players.filter(p=>p.alive&&p.id!==me?.id).length===0||!!state.dhappa} onClick={()=>{setTargetPick(players.filter(p=>p.alive&&p.id!==me?.id).map(p=>p.id));setSelected([]);setExpressionError('')}}>DHAPPA</button>
         </div>
-        {targetPick.length>0&&<div className="chooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{state.players.filter(p=>p.alive&&p.id!==me.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}></span>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
+        {targetPick.length>0&&<div className="chooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!==me?.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}></span>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
       </section>
-      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(state.roundState.events||[]).slice(-8).reverse().map((e,i)=><div key={i}><b>{state.players.find(p=>p.id===e.playerId)?.name||'Player'}</b><span>{e.type==='win'?'WON':e.type==='kick'?'KICKED':e.type.toUpperCase()}</span><em>{e.points>0?`+${e.points}`:'0'}</em></div>)}</div></aside>
+      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(Array.isArray(state.roundState.events)?state.roundState.events:[]).slice(-8).reverse().map((e,i)=>{const eventType=String(e?.type??'EVENT');const points=Number(e?.points)||0;return <div key={i}><b>{players.find(p=>p.id===e?.playerId)?.name||'Player'}</b><span>{eventType==='win'?'WON':eventType==='kick'?'KICKED':eventType.toUpperCase()}</span><em>{points>0?`+${points}`:'0'}</em></div>})}</div></aside>
     </main>
 
-    {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:challengeSelected.map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
+    {state.dhappa&&<ChallengeErrorBoundary onClose={()=>act('cancelChallenge')}><ChallengeModal key={`${state.dhappa.startedAt||'dhappa'}-${state.dhappa.mode||'mode'}`} state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:(Array.isArray(challengeSelected)?challengeSelected:[]).map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} /></ChallengeErrorBoundary>}
     {showSettings&&<Settings settings={state?.settings||settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={false} onClose={()=>setShowSettings(false)} onLeave={()=>{if(window.confirm('Leave this room?')) leaveRoom()}} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
   </div>
 }
@@ -403,48 +526,95 @@ function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connec
 function Lobby({state,me,onStart,onLeave}){
   const [qr,setQr]=useState('');
   const [copied,setCopied]=useState(false);
-  const joinUrl=`${location.origin}/?room=${encodeURIComponent(state.code)}`;
-  useEffect(()=>{QRCode.toDataURL(joinUrl,{width:260,margin:2,errorCorrectionLevel:'M'}).then(setQr).catch(()=>setQr(''));},[joinUrl]);
-  async function copyLink(){try{await navigator.clipboard.writeText(joinUrl);setCopied(true);setTimeout(()=>setCopied(false),1200);}catch{}}
-  return <div className="lobby"><div className="lobbyCard"><div className="eyebrow">WAITING ROOM</div><div className="roomBig">{state.code}</div><div className="share">Share the code or scan the QR code to join. No URL typing required.</div>{qr&&<img className="qr" src={qr} alt="Scan to join Combine room" /> }<div className="shareActions"><button className="secondary" onClick={copyLink}>{copied?'COPIED ✓':'COPY JOIN LINK'}</button></div>{state.players.map(p=><div className="lobbyPlayer" key={p.id}><i style={{background:p.color}}></i><b>{p.name}</b>{p.id===state.hostPlayerId&&<span>HOST</span>}{p.id===me?.id&&<small>YOU</small>}</div>)}<button className="primary" disabled={me?.id!==state.hostPlayerId||state.players.length<2} onClick={onStart}>{state.players.length<2?'WAITING FOR PLAYERS':'START GAME →'}</button><button className="link" onClick={onLeave}>LEAVE ROOM</button></div></div>}
-function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClear,onSubmit,onCancel}){
-  if(!target) return <div className="overlay"><div className="challenge"><div className="chHead"><span>DHAPPA!</span><b>!</b></div><div className="challengeTitle">WAITING FOR GAME STATE</div><p>The expression challenge opened, but the target player's cards have not arrived yet.</p><button className="primary" onClick={()=>onCancel()}>CLOSE</button></div></div>;
-  const mode=state.dhappa?.mode;
+  const players=Array.isArray(state?.players)?state.players:[];
+  const joinUrl=`${location.origin}/?room=${encodeURIComponent(state?.code||'')}`;
+  useEffect(()=>{
+    let alive=true;
+    import('qrcode')
+      .then(mod=>{
+        const api=mod?.default && typeof mod.default==='object' ? mod.default : mod;
+        if(typeof api?.toDataURL!=='function') throw new Error('QR generator unavailable');
+        return api.toDataURL(joinUrl,{width:260,margin:2,errorCorrectionLevel:'M'});
+      })
+      .then(url=>{if(alive && typeof url==='string')setQr(url);})
+      .catch(()=>{if(alive)setQr('');});
+    return()=>{alive=false};
+  },[joinUrl]);
+  async function copyLink(){
+    try{
+      if(typeof navigator?.clipboard?.writeText!=='function') throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(joinUrl);
+      setCopied(true);
+      setTimeout(()=>setCopied(false),1200);
+    }catch{}
+  }
+  return <div className="lobby"><div className="lobbyCard">
+    <div className="eyebrow">WAITING ROOM</div>
+    <div className="roomBig">{state?.code||'------'}</div>
+    <div className="share">Share the code or scan the QR code to join. No URL typing required.</div>
+    {qr&&<img className="qr" src={qr} alt="Scan to join Combine room" />}
+    <div className="shareActions"><button className="secondary" onClick={copyLink}>{copied?'COPIED ✓':'COPY JOIN LINK'}</button></div>
+    {players.map(p=><div className="lobbyPlayer" key={p.id}><i style={{background:p.color}}></i><b>{p.name}</b>{p.id===state?.hostPlayerId&&<span>HOST</span>}{p.id===me?.id&&<small>YOU</small>}</div>)}
+    <button className="primary" disabled={me?.id!==state?.hostPlayerId||players.length<2} onClick={onStart}>{players.length<2?'WAITING FOR PLAYERS':'START GAME →'}</button>
+    <button className="link" onClick={onLeave}>LEAVE ROOM</button>
+  </div></div>;
+}
+
+class ChallengeErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={error:null}}
+  static getDerivedStateFromError(error){return {error}}
+  componentDidCatch(error,info){console.error('Combine challenge render error:',error,info?.componentStack)}
+  render(){
+    if(this.state.error){
+      const reset=()=>this.setState({error:null});
+      return <div className="overlay"><div className="challenge"><div className="chHead"><span>DHAPPA ERROR</span><b>!</b></div><div className="challengeTitle">EXPRESSION SCREEN COULD NOT RENDER</div><p>{String(this.state.error?.message||'Unknown challenge error')}</p><button className="primary" onClick={reset}>RETRY SCREEN</button><button className="cancel" onClick={()=>{if(typeof this.props.onClose==='function') this.props.onClose()}}>CLOSE CHALLENGE</button></div></div>;
+    }
+    return this.props.children;
+  }
+}
+
+function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClear,onSubmit,onCancel,dhappaRemaining}){
+  const safeCancel=typeof onCancel==='function' ? onCancel : ()=>{};
+  const safeToggle=typeof onToggle==='function' ? onToggle : ()=>{};
+  const safeUndo=typeof onUndo==='function' ? onUndo : ()=>{};
+  const safeClear=typeof onClear==='function' ? onClear : ()=>{};
+  const safeSubmit=typeof onSubmit==='function' ? onSubmit : ()=>{};
+  const expressionHand=Array.isArray(target?.hand)?target.hand:[];
+  const safeSelection=(Array.isArray(selection) ? selection : []).filter(i=>Number.isInteger(i)&&i>=0 && i<expressionHand.length);
+  const dh=state?.dhappa && typeof state.dhappa==='object' ? state.dhappa : null;
+  const roundState=state?.roundState && typeof state.roundState==='object' ? state.roundState : {target:0,finishCount:0};
+  if(!target) return <div className="overlay"><div className="challenge"><div className="chHead"><span>DHAPPA!</span><b>!</b></div><div className="challengeTitle">WAITING FOR GAME STATE</div><p>The expression challenge opened, but the target player's cards have not arrived yet.</p><button className="primary" onClick={()=>safeCancel()}>CLOSE</button></div></div>;
+  const mode=dh?.mode;
   const targetIsMe=target.id===me?.id;
   const callerIsMe=caller?.id===me?.id;
-  // In a Dhappa call-out, the CALLER must use the TARGET'S cards to prove
-  // that a valid expression can be made. For a normal attempt, the attempting
-  // player is the target and therefore uses their own cards.
-  const expressionPlayer=target;
-  const expressionHand=expressionPlayer?.hand||[];
-  const val=evalLocal(selection.map(i=>expressionHand[i]));
-  const correct=val!==null&&Math.abs(val-state.roundState.target)<1e-9;
+  const val=evalLocal(safeSelection.filter(i=>Number.isInteger(i)&&i>=0&&i<expressionHand.length).map(i=>expressionHand[i]));
+  const correct=val!==null&&Math.abs(val-Number(roundState.target))<1e-9;
   const canEdit=mode==='callout'?callerIsMe:targetIsMe;
-  const title=mode==='callout' ? `CALL ON ${target.name.toUpperCase()}` : 'MAKE THE TARGET';
+  const title=mode==='callout' ? `CALL ON ${String(target.name || 'PLAYER').toUpperCase()}` : 'MAKE THE TARGET';
   const description=mode==='callout'
-    ? `${caller?.name} called Dhappa on ${target.name}. ${callerIsMe?'Use their cards to prove a valid expression.':'The caller is using the target player\'s cards.'}`
-    : `${target.name} must show an expression hitting ${state.roundState.target}.`;
+    ? `${String(caller?.name||'The caller')} called Dhappa on ${String(target.name||'the target')}. ${callerIsMe?'Use their cards to prove a valid expression.':'The caller is using the target player\'s cards.'}`
+    : `${String(target.name||'Player')} must show an expression hitting ${roundState.target}.`;
+  const remaining=Math.max(0,Number(dhappaRemaining ?? dh?.seconds ?? 30));
+  const danger=remaining<=10;
   return <div className="overlay"><div className="challenge">
-    <div className="chHead"><span>DHAPPA!</span><b className={state.dhappa.seconds<=10?'danger':''}>{Math.ceil(dhappaRemaining ?? state.dhappa.seconds)}s</b></div>
+    <div className="chHead"><span>DHAPPA!</span><b className={danger?'danger':''}>{Math.ceil(remaining)}s</b></div>
     <div className="challengeTitle">{title}</div>
     <p>{description}</p>
-    <div className="challengeHelp">Target: <strong>{state.roundState.target}</strong> · Adjacent number cards concatenate.</div>
+    <div className="challengeHelp">Target: <strong>{roundState.target}</strong> · Adjacent number cards concatenate.</div>
     {canEdit&&<>
-      <div className="challengeHand">{expressionHand.map((c,i)=><button className={`card ${/\d/.test(c)?'num':'op'} ${selection.includes(i)?'sel':''}`} key={i} onClick={()=>onToggle(i)}>{c}</button>)}</div>
-      <div className="chExpr">{selection.map(i=>expressionHand[i]).join(' ')||'SELECT CARDS'}</div>
-      <div className={`chValue ${correct?'ok':val===null?'bad':''}`}>
-        {val===null ? 'INVALID EXPRESSION' : `= ${val}`}
-      </div>
-      <div className="exprUtility"><button className="smallBtn" disabled={!selection.length} onClick={onUndo}>UNDO</button><button className="smallBtn" disabled={!selection.length} onClick={onClear}>CLEAR</button></div>
+      <div className="challengeHand">{expressionHand.map((c,i)=><button className={`card ${/\d/.test(c)?'num':'op'} ${safeSelection.includes(i)?'sel':''}`} key={i} onClick={()=>safeToggle(i)}>{c}</button>)}</div>
+      <div className="chExpr">{safeSelection.map(i=>expressionHand[i]).join(' ')||'SELECT CARDS'}</div>
+      <div className={`chValue ${correct?'ok':val===null?'bad':''}`}>{val===null ? 'INVALID EXPRESSION' : `= ${val}`}</div>
+      <div className="exprUtility"><button className="smallBtn" disabled={!safeSelection.length} onClick={safeUndo}>UNDO</button><button className="smallBtn" disabled={!safeSelection.length} onClick={safeClear}>CLEAR</button></div>
       {mode==='callout'
-        ? <button className="success" onClick={onSubmit} disabled={!selection.length||!correct}>I WON · KICK {target.name} → +3</button>
-        : <button className="success" onClick={onSubmit} disabled={!selection.length||!correct}>I WON · +{PLACE_POINTS[state.roundState.finishCount]??0}</button>}
-      {mode==='callout'&&<button className="dangerBtn" onClick={()=>onCancel('fail')}>I FAILED · KICK ME OUT</button>}
-      {mode==='attempt'&&<button className="dangerBtn" onClick={()=>onCancel('fail')}>I FAILED · 0 POINTS</button>}
+        ? <button className="success" onClick={safeSubmit} disabled={!safeSelection.length||!correct}>I WON · KICK {String(target.name||'PLAYER')} → +3</button>
+        : <button className="success" onClick={safeSubmit} disabled={!safeSelection.length||!correct}>I WON · +{PLACE_POINTS[roundState.finishCount]??0}</button>}
+      {mode==='callout'&&<button className="dangerBtn" onClick={()=>safeCancel('fail')}>I FAILED · KICK ME OUT</button>}
+      {mode==='attempt'&&<button className="dangerBtn" onClick={()=>safeCancel('fail')}>I FAILED · 0 POINTS</button>}
     </>}
-    {!canEdit&&<div className="watching">Waiting for <strong>{mode==='callout'?caller?.name:target.name}</strong> to demonstrate the expression.</div>}
-    <button className="cancel" onClick={()=>onCancel()}>{callerIsMe?'CANCEL DHAPPA':'CLOSE'}</button>
-  </div></div>
+    {!canEdit&&<div className="watching">Waiting for <strong>{mode==='callout'?String(caller?.name||'the caller'):String(target.name||'the player')}</strong> to demonstrate the expression.</div>}
+    <button className="cancel" onClick={()=>safeCancel()}>{callerIsMe?'CANCEL DHAPPA':'CLOSE'}</button>
+  </div></div>;
 }
 
 function Settings({settings,setSettings,name,setName,ui,updateUi,allowGameplayEdit,onClose,onLeave,onReset}){
@@ -504,11 +674,11 @@ function Settings({settings,setSettings,name,setName,ui,updateUi,allowGameplayEd
       {tab==='gameplay'&&<section className="settingsSection">
         <h3>GAMEPLAY</h3>
         <div className="grid2">
-          <label>GLOBAL TARGET<input type="number" min="1" value={settings.targetScore} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({targetScore:Math.max(1,Number(e.target.value)||1)})}/></label>
-          <label>PLAYER TIMER · SEC<input type="number" min="1" value={settings.playerSeconds} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({playerSeconds:Math.max(1,Number(e.target.value)||1)})}/></label>
+          <label>GLOBAL TARGET<input type="number" min="1" value={settings?.targetScore ?? 11} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({targetScore:Math.max(1,Number(e.target.value)||1)})}/></label>
+          <label>PLAYER TIMER · SEC<input type="number" min="1" value={settings?.playerSeconds ?? 120} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({playerSeconds:Math.max(1,Number(e.target.value)||1)})}/></label>
         </div>
-        <label>DHAPPA TIMER · SEC<input type="number" min="5" value={settings.dhappaSeconds} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({dhappaSeconds:Math.max(5,Number(e.target.value)||30)})}/></label>
-        <label>TURN DIRECTION<select value={settings.direction} disabled={!allowGameplayEdit} onChange={e=>setGame({direction:e.target.value})}><option value="counterclockwise">COUNTERCLOCKWISE</option><option value="clockwise">CLOCKWISE</option></select></label>
+        <label>DHAPPA TIMER · SEC<input type="number" min="5" value={settings?.dhappaSeconds ?? 30} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({dhappaSeconds:Math.max(5,Number(e.target.value)||30)})}/></label>
+        <label>TURN DIRECTION<select value={settings?.direction ?? 'counterclockwise'} disabled={!allowGameplayEdit} onChange={e=>setGame({direction:e.target.value})}><option value="counterclockwise">COUNTERCLOCKWISE</option><option value="clockwise">CLOCKWISE</option></select></label>
         {!allowGameplayEdit&&<p className="settingsHint">Game settings are locked after the room is created so the active game rules cannot change mid-round.</p>}
       </section>}
 
