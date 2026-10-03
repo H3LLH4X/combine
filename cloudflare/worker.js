@@ -638,6 +638,9 @@ export class CombineRoom extends DurableObject {
         try {
           const p=this.addPlayer(body.name,false);
           await this.save();
+          // Immediately notify connected clients. The host should see a new
+          // player in the lobby without refreshing the page.
+          this.broadcast();
           return json({ok:true,playerId:p.id,state:this.serialize(p.id)});
         } catch(e) { return json({error:e.message},409); }
       }
@@ -645,6 +648,7 @@ export class CombineRoom extends DurableObject {
         if (!this.room) return json({error:'Room not found.'},404);
         const p=this.player(body.playerId);
         if (!p) return json({error:'Player session not found.'},404);
+        this.broadcast();
         return json({ok:true,playerId:p.id,state:this.serialize(p.id)});
       }
       return json({error:'Unknown internal endpoint.'},404);
