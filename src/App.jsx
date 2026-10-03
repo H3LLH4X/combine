@@ -50,42 +50,108 @@ function MatrixRain({enabled}){
     if(!canvas) return;
     const ctx=canvas.getContext('2d');
     if(!ctx) return;
+
     const chars='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/=()';
-    let raf=0; let columns=0; let drops=[]; let width=0; let height=0;
-    const resize=()=>{
-      const dpr=Math.min(window.devicePixelRatio||1,2);
-      width=window.innerWidth; height=window.innerHeight;
-      canvas.width=Math.floor(width*dpr); canvas.height=Math.floor(height*dpr);
-      canvas.style.width=`${width}px`; canvas.style.height=`${height}px`;
-      ctx.setTransform(dpr,0,0,dpr,0,0);
-      ctx.font='14px monospace';
-      columns=Math.ceil(width/14);
-      drops=Array.from({length:columns},()=>Math.random()*height/14);
+    let raf=0;
+    let width=0;
+    let height=0;
+    let dpr=1;
+    let glyphs=[];
+    let lastChange=0;
+
+    const randomChar=()=>chars[(Math.random()*chars.length)|0];
+    const randomSize=()=>48 + Math.random()*74;
+    const randomSpeed=0.8 + Math.random()*1.8;
+
+    const seedGlyphs=()=>{
+      const count=Math.max(26, Math.min(76, Math.round((width*height)/19000)));
+      glyphs=Array.from({length:count},(_,i)=>({
+        x:Math.random()*(width+420)-210,
+        y:Math.random()*(height+420)-210,
+        size:randomSize(),
+        speed:randomSpeed(),
+        char:randomChar(),
+        age:Math.random()*1000+i*17,
+        phase:Math.random()*Math.PI*2,
+        alpha:0.10+Math.random()*0.22,
+        hue:185+Math.random()*120,
+      }));
     };
-    const frame=()=>{
-      ctx.fillStyle='rgba(5, 2, 18, 0.075)';
-      ctx.fillRect(0,0,width,height);
-      ctx.font='14px monospace';
-      for(let i=0;i<columns;i++){
-        const x=i*14;
-        const y=drops[i]*14;
-        const ch=chars[(Math.random()*chars.length)|0];
-        const hue=175 + ((i*13 + Math.floor(y/14))%120);
-        ctx.fillStyle=`hsla(${hue}, 100%, 70%, .82)`;
-        ctx.fillText(ch,x,y);
-        if(y>height+30 && Math.random()>.975) drops[i]=0;
-        drops[i]+=0.46 + Math.random()*.5;
+
+    const resize=()=>{
+      dpr=Math.min(window.devicePixelRatio||1,2);
+      width=window.innerWidth;
+      height=window.innerHeight;
+      canvas.width=Math.floor(width*dpr);
+      canvas.height=Math.floor(height*dpr);
+      canvas.style.width=`${width}px`;
+      canvas.style.height=`${height}px`;
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      seedGlyphs();
+    };
+
+    const wrapGlyph=(g)=>{
+      if(g.x>width+260 || g.y>height+260){
+        g.x=Math.random()*width-320;
+        g.y=-220-Math.random()*220;
+        g.size=randomSize();
+        g.speed=randomSpeed();
       }
+    };
+
+    const frame=(now)=>{
+      ctx.fillStyle='rgba(5, 2, 18, 0.13)';
+      ctx.fillRect(0,0,width,height);
+
+      // Large diagonal glyphs sweep from top-left toward bottom-right.
+      ctx.save();
+      ctx.translate(width/2,height/2);
+      ctx.rotate(-0.24);
+      ctx.translate(-width/2,-height/2);
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+
+      if(now-lastChange>85){
+        for(const g of glyphs){
+          if(Math.random()<0.72) g.char=randomChar();
+          if(Math.random()<0.18) g.size=randomSize();
+          g.hue=175+Math.random()*145;
+        }
+        lastChange=now;
+      }
+
+      for(const g of glyphs){
+        g.age+=1;
+        g.x += g.speed*1.35;
+        g.y += g.speed*0.88;
+        wrapGlyph(g);
+
+        const pulse=0.82+0.18*Math.sin(g.age*0.08+g.phase);
+        ctx.font=`900 ${Math.round(g.size)}px monospace`;
+        ctx.shadowBlur=20;
+        ctx.shadowColor=`hsla(${g.hue},100%,70%,${g.alpha*1.8})`;
+        ctx.fillStyle=`hsla(${g.hue},100%,70%,${g.alpha*pulse})`;
+        ctx.fillText(g.char,g.x,g.y);
+      }
+      ctx.restore();
+
       raf=requestAnimationFrame(frame);
     };
+
     resize();
     window.addEventListener('resize',resize);
-    ctx.fillStyle='#050212'; ctx.fillRect(0,0,width,height);
+    ctx.fillStyle='#050212';
+    ctx.fillRect(0,0,width,height);
     raf=requestAnimationFrame(frame);
-    return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize)};
+
+    return()=>{
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize',resize);
+    };
   },[enabled]);
+
   if(!enabled) return null;
-  return <canvas ref={ref} className="matrixRain" aria-hidden="true"/>;
+  return <canvas ref={ref} className="matrixRain diagonalGlyphs" aria-hidden="true"/>;
 }
 
 class AppErrorBoundary extends React.Component {
