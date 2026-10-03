@@ -70,3 +70,7 @@ Deploy the React frontend and the Node/WebSocket server on infrastructure that s
 This is a single Node web service that serves the built React client and the WebSocket server from the same origin. Deploy the repository as a Render Web Service using the included `render.yaml`. Render supports inbound WebSockets; the deployed app uses `https`/`wss` automatically via the current origin. Share the generated `onrender.com` URL or the room's Copy Join Link. No IP:port is required.
 
 Important: rooms are currently in server memory. A server restart/redeploy clears active rooms. For longer-lived production rooms, add persistent storage (e.g. Redis/Postgres) and/or a session store.
+
+
+## Cloudflare backend
+See `README-CLOUDFLARE.md` for the Cloudflare Workers + Durable Objects deployment.

@@ -3,10 +3,7 @@ import QRCode from 'qrcode';
 import './styles.css';
 
 const WS_PATH = '/ws';
-<<<<<<< HEAD
 const WS_BASE = (import.meta.env.VITE_WS_URL || '').replace(/\/$/, '');
-=======
->>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
 const PLACE_POINTS = [5,3,2,1,1];
 
 function formatTime(s){const n=Math.max(0,Number(s)||0);return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
@@ -19,6 +16,17 @@ function evalLocal(cards){
   for(const c of cards){if(/^\d$/.test(c))num+=c;else{flush();toks.push(c)}} flush();
   const vals=[],ops=[]; const prec={'+':1,'-':1,'*':2,'/':2}; const apply=()=>{const b=vals.pop(),a=vals.pop(),op=ops.pop();if(op==='+')vals.push(a+b);else if(op==='-')vals.push(a-b);else if(op==='*')vals.push(a*b);else{if(b===0)throw Error();vals.push(a/b)}};
   try{for(const t of toks){if(typeof t==='number')vals.push(t);else{while(ops.length&&prec[ops.at(-1)]>=prec[t])apply();ops.push(t)}}while(ops.length)apply();return vals.length===1&&Number.isFinite(vals[0])?vals[0]:null}catch{return null}
+}
+
+function getHttpServerBase(){
+  const raw=(import.meta.env.VITE_WS_URL||'').replace(/\/$/,'');
+  if(!raw) return location.origin;
+  return raw.replace(/^wss:/,'https:').replace(/^ws:/,'http:');
+}
+function getWsServerBase(){
+  const raw=(import.meta.env.VITE_WS_URL||'').replace(/\/$/,'');
+  if(raw) return raw.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
+  return location.protocol==='https:'?'wss://'+location.host:'ws://'+location.host;
 }
 
 function useGameSocket(){
@@ -36,92 +44,127 @@ function useGameSocket(){
   });
 
   useEffect(()=>{sessionRef.current=session;},[session]);
-  useEffect(()=>{
-    mountedRef.current=true;
-    return ()=>{
-      mountedRef.current=false;
-      if(retryRef.current) clearTimeout(retryRef.current);
-      wsRef.current?.close();
-    };
+  useEffect(()=>()=>{
+    mountedRef.current=false;
+    if(retryRef.current) clearTimeout(retryRef.current);
+    wsRef.current?.close();
   },[]);
 
-  const scheduleReconnect=()=>{
-    if(!mountedRef.current || !sessionRef.current || retryRef.current) return;
-    const delay=retryDelayRef.current;
-    retryRef.current=setTimeout(()=>{
-      retryRef.current=null;
-      connect().then(()=>{retryDelayRef.current=800}).catch(()=>{
-        retryDelayRef.current=Math.min(10000,Math.round(retryDelayRef.current*1.7));
-        scheduleReconnect();
-      });
-    },delay);
+  const clearSession=()=>{
+    localStorage.removeItem('combine-session');
+    sessionRef.current=null;
+    setSession(null);
+    setState(null);
   };
 
-  const connect=()=>{
-    if(wsRef.current?.readyState===WebSocket.OPEN) return Promise.resolve();
+  const connectToSession=async(sess)=>{
+    if(!sess?.roomCode||!sess?.playerId) throw new Error('No saved room session.');
+    if(wsRef.current?.readyState===WebSocket.OPEN) return;
     if(connectPromiseRef.current) return connectPromiseRef.current;
+
     connectPromiseRef.current=new Promise((resolve,reject)=>{
-      const proto=location.protocol==='https:'?'wss':'ws';
-<<<<<<< HEAD
-      const wsUrl = WS_BASE ? `${WS_BASE}${WS_PATH}` : `${proto}://${location.host}${WS_PATH}`;
+      const wsUrl=`${getWsServerBase()}/ws?room=${encodeURIComponent(sess.roomCode)}&playerId=${encodeURIComponent(sess.playerId)}`;
       const ws=new WebSocket(wsUrl);
-=======
-      const ws=new WebSocket(`${proto}://${location.host}${WS_PATH}`);
->>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
       wsRef.current=ws;
       let opened=false;
       ws.onopen=()=>{
         opened=true;
         retryDelayRef.current=800;
         setConnected(true);
-        const saved=sessionRef.current;
-        if(saved?.roomCode&&saved?.playerId){
-          ws.send(JSON.stringify({type:'rejoinRoom',code:saved.roomCode,playerId:saved.playerId}));
-        }
         resolve();
       };
-      ws.onerror=()=>{if(!opened) reject(new Error('Unable to connect to the game server.'));};
+      ws.onerror=()=>{
+        if(!opened) reject(new Error('Unable to connect to the game server.'));
+      };
       ws.onclose=()=>{
         setConnected(false);
         connectPromiseRef.current=null;
-        if(sessionRef.current) scheduleReconnect();
+        if(mountedRef.current && sessionRef.current){
+          const delay=retryDelayRef.current;
+          if(!retryRef.current){
+            retryRef.current=setTimeout(()=>{
+              retryRef.current=null;
+              connectToSession(sessionRef.current).catch(()=>{
+                retryDelayRef.current=Math.min(10000,Math.round(retryDelayRef.current*1.7));
+              });
+            },delay);
+          }
+        }
       };
       ws.onmessage=e=>{
         try{
           const m=JSON.parse(e.data);
-          if(m.type==='state'){
-            setState(m.state);
-          }else if(m.type==='joined'){
-            const next={roomCode:m.roomCode,playerId:m.playerId};
-            localStorage.setItem('combine-session',JSON.stringify(next));
-            sessionRef.current=next;
-            setSession(next);
-            if(m.state)setState(m.state);
-          }else if(m.type==='error'){
-            setMessages(x=>[m.message,...x].slice(0,3));
-          }else if(m.type==='left'){
-            localStorage.removeItem('combine-session');
-            sessionRef.current=null;
-<<<<<<< HEAD
-            setSession(null);
-            setState(null);
-=======
-            setSession(null);setState(null);
->>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
-          }
+          if(m.type==='state') setState(m.state);
+          else if(m.type==='error') setMessages(x=>[m.message,...x].slice(0,4));
+          else if(m.type==='left') clearSession();
         }catch{}
       };
     });
     return connectPromiseRef.current;
   };
 
-  useEffect(()=>{ connect().catch(()=>{}); },[]);
+  useEffect(()=>{
+    if(session?.roomCode&&session?.playerId){
+      connectToSession(session).catch(()=>{});
+    }
+  },[]);
+
+  const api=async(path,body)=>{
+    const res=await fetch(`${getHttpServerBase()}${path}`,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    let data={};
+    try{data=await res.json()}catch{}
+    if(!res.ok) throw new Error(data.error||`Request failed (${res.status})`);
+    return data;
+  };
 
   const send=async msg=>{
-    await connect();
-    if(wsRef.current?.readyState!==WebSocket.OPEN) throw new Error('Connection lost.');
-    wsRef.current.send(JSON.stringify(msg));
+    if(msg.type==='createRoom'){
+      try{
+        const data=await api('/api/create',{name:msg.name,settings:msg.settings});
+        const next={roomCode:data.roomCode,playerId:data.playerId};
+        localStorage.setItem('combine-session',JSON.stringify(next));
+        sessionRef.current=next; setSession(next); if(data.state)setState(data.state);
+        await connectToSession(next);
+      }catch(e){setMessages(x=>[e.message,...x].slice(0,4));}
+      return;
+    }
+    if(msg.type==='joinRoom'){
+      try{
+        const data=await api('/api/join',{name:msg.name,code:String(msg.code||'').toUpperCase()});
+        const next={roomCode:String(msg.code||'').toUpperCase(),playerId:data.playerId};
+        localStorage.setItem('combine-session',JSON.stringify(next));
+        sessionRef.current=next; setSession(next); if(data.state)setState(data.state);
+        await connectToSession(next);
+      }catch(e){setMessages(x=>[e.message,...x].slice(0,4));}
+      return;
+    }
+    if(msg.type==='rejoinRoom'){
+      try{
+        const code=String(msg.code||sessionRef.current?.roomCode||'').toUpperCase();
+        const playerId=msg.playerId||sessionRef.current?.playerId;
+        const data=await api('/api/rejoin',{code,playerId});
+        const next={roomCode:code,playerId:data.playerId};
+        localStorage.setItem('combine-session',JSON.stringify(next));
+        sessionRef.current=next; setSession(next); if(data.state)setState(data.state);
+        await connectToSession(next);
+      }catch(e){
+        if(/not found/i.test(e.message)){clearSession();}
+        setMessages(x=>[e.message,...x].slice(0,4));
+      }
+      return;
+    }
+
+    try{
+      await connectToSession(sessionRef.current);
+      if(wsRef.current?.readyState!==WebSocket.OPEN) throw new Error('Connection lost.');
+      wsRef.current.send(JSON.stringify(msg));
+    }catch(e){setMessages(x=>[e.message,...x].slice(0,4));}
   };
+
   return {connected,state,session,send,messages};
 }
 
@@ -134,12 +177,21 @@ export default function App(){
   const [targetPick,setTargetPick]=useState([]); const [selected,setSelected]=useState([]); const [challengeSelected,setChallengeSelected]=useState([]);
   const [showSettings,setShowSettings]=useState(false); const [sound,setSound]=useState(true); const [animations,setAnimations]=useState(true);
   const [expressionError,setExpressionError]=useState('');
+  const [clockNow,setClockNow]=useState(Date.now());
+  useEffect(()=>{const id=setInterval(()=>setClockNow(Date.now()),250);return()=>clearInterval(id)},[]);
   const me=state?.players?.find(p=>p.id===state.me); const active=state?.players?.find(p=>p.id===state.roundState?.activeId); const isMyTurn=!!me&&!!active&&me.id===active.id;
   const challengeTarget=state?.dhappa?state.players.find(p=>p.id===state.dhappa.targetId):null;
   const caller=state?.dhappa?state.players.find(p=>p.id===state.dhappa.callerId):null;
   const sorted=[...(state?.players||[])].sort((a,b)=>b.score-a.score);
+  function displayRemaining(p){
+    if(!p||!state?.roundState) return 0;
+    if(p.id===state.roundState.activeId && state.roundState.turnDeadlineAt && state.phase==='turn' && !state.dhappa){
+      return Math.max(0,(state.roundState.turnDeadlineAt-clockNow)/1000);
+    }
+    return p.remainingTime;
+  }
+  const dhappaRemaining=state?.dhappa?.expiresAt ? Math.max(0,(state.dhappa.expiresAt-clockNow)/1000) : null;
 
-<<<<<<< HEAD
   useEffect(()=>{
     if(!state){
       if(!session) setView('menu');
@@ -148,9 +200,6 @@ export default function App(){
     if(state?.phase==='lobby')setView('lobby');
     else if(state?.phase==='turn'||state?.phase==='roundSummary'||state?.phase==='gameOver')setView(state.phase);
   },[state?.phase,state,session]);
-=======
-  useEffect(()=>{if(state?.phase==='lobby')setView('lobby');else if(state?.phase==='turn'||state?.phase==='roundSummary'||state?.phase==='gameOver')setView(state.phase)},[state?.phase]);
->>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
   useEffect(()=>{ const room=new URLSearchParams(window.location.search).get('room'); if(room) setRoomCode(room.toUpperCase()); },[]);
 
   async function createRoom(){await send({type:'createRoom',name,settings});}
@@ -165,14 +214,10 @@ export default function App(){
   function clearChallenge(){setChallengeSelected([]);setExpressionError('')}
   function submitExpression(indices,targetHand){const cards=indices.map(i=>targetHand[i]);const value=evalLocal(cards); if(value===null){setExpressionError('Invalid expression. Use at least one number and one operator.');return false} if(Math.abs(value-(state.roundState.target))>1e-9){setExpressionError(`Expression = ${value}; target = ${state.roundState.target}.`);return false}setExpressionError('');return true}
 
-<<<<<<< HEAD
   if(view==='menu') return <>
     <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />
     {showSettings&&<Settings settings={settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
   </>;
-=======
-  if(view==='menu') return <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />;
->>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
   if(view==='lobby') return <Lobby state={state} me={me} onStart={startGame} onLeave={()=>act('leaveRoom')} />;
   if(view==='roundSummary') return <Summary state={state} onNext={()=>{if(me?.id===state.hostPlayerId)act('nextRound')}} />;
   if(view==='gameOver') return <GameOver state={state} />;
@@ -184,7 +229,7 @@ export default function App(){
       <section className="board">
         <div className="roundInfo">ROUND {state.round} · GLOBAL TARGET <b>{state.settings.targetScore}</b></div>
         <div className="targetCard"><span>ROUND TARGET</span><strong>{state.roundState.target}</strong><small>{state.roundState.targetCards.join(' + ')}</small></div>
-        <div className="activeLine"><div className="activeName" style={{color:active?.color}}>{active?.name?.toUpperCase()}'S TURN</div><div className="bigTimer">{formatTime(active?.remainingTime)}</div></div>
+        <div className="activeLine"><div className="activeName" style={{color:active?.color}}>{active?.name?.toUpperCase()}'S TURN</div><div className="bigTimer">{formatTime(displayRemaining(active))}</div></div>
         <div className="decks">
           <button className="deck number" disabled={!isMyTurn||state.roundState.drawnThisTurn||!state.roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}><span>NUMBER</span><b>DRAW</b><small>{state.roundState.numberCardsLeft} LEFT</small></button>
           <button className="deck operator" disabled={!isMyTurn||state.roundState.drawnThisTurn||!state.roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}><span>OPERATOR</span><b>DRAW</b><small>{state.roundState.operatorCardsLeft} LEFT</small></button>
@@ -214,10 +259,10 @@ export default function App(){
         </div>
         {targetPick.length>0&&<div className="chooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{state.players.filter(p=>p.alive&&p.id!==me.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}></span>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
       </section>
-      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(p.remainingTime):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(state.roundState.events||[]).slice(-8).reverse().map((e,i)=><div key={i}><b>{state.players.find(p=>p.id===e.playerId)?.name||'Player'}</b><span>{e.type==='win'?'WON':e.type==='kick'?'KICKED':e.type.toUpperCase()}</span><em>{e.points>0?`+${e.points}`:'0'}</em></div>)}</div></aside>
+      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(state.roundState.events||[]).slice(-8).reverse().map((e,i)=><div key={i}><b>{state.players.find(p=>p.id===e.playerId)?.name||'Player'}</b><span>{e.type==='win'?'WON':e.type==='kick'?'KICKED':e.type.toUpperCase()}</span><em>{e.points>0?`+${e.points}`:'0'}</em></div>)}</div></aside>
     </main>
 
-    {state.dhappa&&<ChallengeModal state={state} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{indices:challengeSelected})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
+    {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{indices:challengeSelected})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
     {showSettings&&<Settings settings={state?.settings||settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
   </div>
 }
@@ -249,7 +294,7 @@ function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClea
     ? `${caller?.name} called Dhappa on ${target.name}. ${callerIsMe?'Use their cards to prove a valid expression.':'The caller is using the target player\'s cards.'}`
     : `${target.name} must show an expression hitting ${state.roundState.target}.`;
   return <div className="overlay"><div className="challenge">
-    <div className="chHead"><span>DHAPPA!</span><b className={state.dhappa.seconds<=10?'danger':''}>{state.dhappa.seconds}s</b></div>
+    <div className="chHead"><span>DHAPPA!</span><b className={state.dhappa.seconds<=10?'danger':''}>{Math.ceil(dhappaRemaining ?? state.dhappa.seconds)}s</b></div>
     <div className="challengeTitle">{title}</div>
     <p>{description}</p>
     <div className="challengeHelp">Target: <strong>{state.roundState.target}</strong> · Adjacent number cards concatenate.</div>

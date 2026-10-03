@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev:cloudflare": "wrangler dev",
+    "deploy:cloudflare": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -16,5 +18,7 @@
     "ws": "latest",
     "qrcode": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "wrangler": "latest"
+  }
 }

@@ -6,6 +6,6 @@ export default defineConfig({
   server:{
     host:'0.0.0.0',
     port:5173,
-    proxy:{'/ws':{target:'ws://localhost:3001',ws:true},'/lan-info':{target:'http://localhost:3001'}}
+    proxy:{'/ws':{target:'ws://localhost:3001',ws:true},'/api':{target:'http://localhost:3001'},'/lan-info':{target:'http://localhost:3001'}}
   }
 });

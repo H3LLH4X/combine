@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "combine-server",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-10-02",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COMBINE_ROOM",
+        "class_name": "CombineRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CombineRoom"]
+    }
+  ]
+}
