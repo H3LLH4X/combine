@@ -3,7 +3,10 @@ import QRCode from 'qrcode';
 import './styles.css';
 
 const WS_PATH = '/ws';
+<<<<<<< HEAD
 const WS_BASE = (import.meta.env.VITE_WS_URL || '').replace(/\/$/, '');
+=======
+>>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
 const PLACE_POINTS = [5,3,2,1,1];
 
 function formatTime(s){const n=Math.max(0,Number(s)||0);return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
@@ -59,8 +62,12 @@ function useGameSocket(){
     if(connectPromiseRef.current) return connectPromiseRef.current;
     connectPromiseRef.current=new Promise((resolve,reject)=>{
       const proto=location.protocol==='https:'?'wss':'ws';
+<<<<<<< HEAD
       const wsUrl = WS_BASE ? `${WS_BASE}${WS_PATH}` : `${proto}://${location.host}${WS_PATH}`;
       const ws=new WebSocket(wsUrl);
+=======
+      const ws=new WebSocket(`${proto}://${location.host}${WS_PATH}`);
+>>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
       wsRef.current=ws;
       let opened=false;
       ws.onopen=()=>{
@@ -95,8 +102,12 @@ function useGameSocket(){
           }else if(m.type==='left'){
             localStorage.removeItem('combine-session');
             sessionRef.current=null;
+<<<<<<< HEAD
             setSession(null);
             setState(null);
+=======
+            setSession(null);setState(null);
+>>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
           }
         }catch{}
       };
@@ -128,6 +139,7 @@ export default function App(){
   const caller=state?.dhappa?state.players.find(p=>p.id===state.dhappa.callerId):null;
   const sorted=[...(state?.players||[])].sort((a,b)=>b.score-a.score);
 
+<<<<<<< HEAD
   useEffect(()=>{
     if(!state){
       if(!session) setView('menu');
@@ -136,6 +148,9 @@ export default function App(){
     if(state?.phase==='lobby')setView('lobby');
     else if(state?.phase==='turn'||state?.phase==='roundSummary'||state?.phase==='gameOver')setView(state.phase);
   },[state?.phase,state,session]);
+=======
+  useEffect(()=>{if(state?.phase==='lobby')setView('lobby');else if(state?.phase==='turn'||state?.phase==='roundSummary'||state?.phase==='gameOver')setView(state.phase)},[state?.phase]);
+>>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
   useEffect(()=>{ const room=new URLSearchParams(window.location.search).get('room'); if(room) setRoomCode(room.toUpperCase()); },[]);
 
   async function createRoom(){await send({type:'createRoom',name,settings});}
@@ -150,10 +165,14 @@ export default function App(){
   function clearChallenge(){setChallengeSelected([]);setExpressionError('')}
   function submitExpression(indices,targetHand){const cards=indices.map(i=>targetHand[i]);const value=evalLocal(cards); if(value===null){setExpressionError('Invalid expression. Use at least one number and one operator.');return false} if(Math.abs(value-(state.roundState.target))>1e-9){setExpressionError(`Expression = ${value}; target = ${state.roundState.target}.`);return false}setExpressionError('');return true}
 
+<<<<<<< HEAD
   if(view==='menu') return <>
     <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />
     {showSettings&&<Settings settings={settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
   </>;
+=======
+  if(view==='menu') return <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />;
+>>>>>>> a74bf061ed319d006025bbca6b61923e1aabe5eb
   if(view==='lobby') return <Lobby state={state} me={me} onStart={startGame} onLeave={()=>act('leaveRoom')} />;
   if(view==='roundSummary') return <Summary state={state} onNext={()=>{if(me?.id===state.hostPlayerId)act('nextRound')}} />;
   if(view==='gameOver') return <GameOver state={state} />;
