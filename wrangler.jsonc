@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "combine-server",
+  "name": "combine",
   "main": "cloudflare/worker.js",
   "compatibility_date": "2026-10-02",
   "durable_objects": {

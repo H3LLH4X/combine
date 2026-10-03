@@ -3,7 +3,9 @@ import QRCode from 'qrcode';
 import './styles.css';
 
 const WS_PATH = '/ws';
-const WS_BASE = (import.meta.env.VITE_WS_URL || '').replace(/\/$/, '');
+// Default production multiplayer backend. VITE_WS_URL overrides this for another deployment.
+const DEFAULT_SERVER_BASE = 'https://combine.clockcombine.workers.dev';
+const WS_BASE = (import.meta.env.VITE_WS_URL || DEFAULT_SERVER_BASE).replace(/\/$/, '');
 const PLACE_POINTS = [5,3,2,1,1];
 
 function formatTime(s){const n=Math.max(0,Number(s)||0);return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
@@ -19,14 +21,10 @@ function evalLocal(cards){
 }
 
 function getHttpServerBase(){
-  const raw=(import.meta.env.VITE_WS_URL||'').replace(/\/$/,'');
-  if(!raw) return location.origin;
-  return raw.replace(/^wss:/,'https:').replace(/^ws:/,'http:');
+  return WS_BASE.replace(/^wss:/,'https:').replace(/^ws:/,'http:');
 }
 function getWsServerBase(){
-  const raw=(import.meta.env.VITE_WS_URL||'').replace(/\/$/,'');
-  if(raw) return raw.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
-  return location.protocol==='https:'?'wss://'+location.host:'ws://'+location.host;
+  return WS_BASE.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
 }
 
 function useGameSocket(){
@@ -215,6 +213,7 @@ export default function App(){
   function submitExpression(indices,targetHand){const cards=indices.map(i=>targetHand[i]);const value=evalLocal(cards); if(value===null){setExpressionError('Invalid expression. Use at least one number and one operator.');return false} if(Math.abs(value-(state.roundState.target))>1e-9){setExpressionError(`Expression = ${value}; target = ${state.roundState.target}.`);return false}setExpressionError('');return true}
 
   if(view==='menu') return <>
+    {messages.length>0&&<div className="toast menuToast">{messages[0]}</div>}
     <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />
     {showSettings&&<Settings settings={settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
   </>;

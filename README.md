@@ -74,3 +74,7 @@ Important: rooms are currently in server memory. A server restart/redeploy clear
 
 ## Cloudflare backend
 See `README-CLOUDFLARE.md` for the Cloudflare Workers + Durable Objects deployment.
+
+
+## Default multiplayer server
+The Vercel frontend defaults to `https://combine.clockcombine.workers.dev` for HTTP API and WebSocket connections. Set `VITE_WS_URL` only when using a different Worker/server.
