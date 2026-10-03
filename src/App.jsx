@@ -37,6 +37,7 @@ function useGameSocket(){
   const [connected,setConnected]=useState(false);
   const [state,setState]=useState(null);
   const [messages,setMessages]=useState([]);
+  const [serverOffset,setServerOffset]=useState(0);
   const [session,setSession]=useState(()=>{
     try{return JSON.parse(localStorage.getItem('combine-session')||'null')}catch{return null}
   });
@@ -92,7 +93,11 @@ function useGameSocket(){
       ws.onmessage=e=>{
         try{
           const m=JSON.parse(e.data);
-          if(m.type==='state') setState(m.state);
+          if(m.type==='state') {
+            const receivedAt=Date.now();
+            if(Number.isFinite(m.state?.serverNow)) setServerOffset(m.state.serverNow-receivedAt);
+            setState(m.state);
+          }
           else if(m.type==='error') setMessages(x=>[m.message,...x].slice(0,4));
           else if(m.type==='left') clearSession();
         }catch{}
@@ -163,11 +168,11 @@ function useGameSocket(){
     }catch(e){setMessages(x=>[e.message,...x].slice(0,4));}
   };
 
-  return {connected,state,session,send,messages};
+  return {connected,state,session,send,messages,serverOffset};
 }
 
 export default function App(){
-  const {connected,state,session,send,messages}=useGameSocket();
+  const {connected,state,session,send,messages,serverOffset}=useGameSocket();
   const [view,setView]=useState('menu');
   const [name,setName]=useState('Player');
   const [roomCode,setRoomCode]=useState('');
@@ -175,8 +180,9 @@ export default function App(){
   const [targetPick,setTargetPick]=useState([]); const [selected,setSelected]=useState([]); const [challengeSelected,setChallengeSelected]=useState([]);
   const [showSettings,setShowSettings]=useState(false); const [sound,setSound]=useState(true); const [animations,setAnimations]=useState(true);
   const [expressionError,setExpressionError]=useState('');
-  const [clockNow,setClockNow]=useState(Date.now());
-  useEffect(()=>{const id=setInterval(()=>setClockNow(Date.now()),250);return()=>clearInterval(id)},[]);
+  const [localNow,setLocalNow]=useState(Date.now());
+  useEffect(()=>{const id=setInterval(()=>setLocalNow(Date.now()),100);return()=>clearInterval(id)},[]);
+  const clockNow=localNow+serverOffset;
   const me=state?.players?.find(p=>p.id===state.me); const active=state?.players?.find(p=>p.id===state.roundState?.activeId); const isMyTurn=!!me&&!!active&&me.id===active.id;
   const challengeTarget=state?.dhappa?state.players.find(p=>p.id===state.dhappa.targetId):null;
   const caller=state?.dhappa?state.players.find(p=>p.id===state.dhappa.callerId):null;
@@ -261,7 +267,7 @@ export default function App(){
       <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(state.roundState.events||[]).slice(-8).reverse().map((e,i)=><div key={i}><b>{state.players.find(p=>p.id===e.playerId)?.name||'Player'}</b><span>{e.type==='win'?'WON':e.type==='kick'?'KICKED':e.type.toUpperCase()}</span><em>{e.points>0?`+${e.points}`:'0'}</em></div>)}</div></aside>
     </main>
 
-    {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{indices:challengeSelected})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
+    {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:challengeSelected.map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
     {showSettings&&<Settings settings={state?.settings||settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
   </div>
 }
@@ -316,3 +322,45 @@ function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClea
 }
 
 function Settings({settings,sound,setSound,animations,setAnimations,onClose}){return <div className="overlay"><div className="settings"><div className="setTitle">SETTINGS <button onClick={onClose}>✕</button></div><section><h3>AUDIO</h3><label className="switch"><span>Sound effects</span><input type="checkbox" checked={sound} onChange={e=>setSound(e.target.checked)}/></label></section><section><h3>VIDEO</h3><label className="switch"><span>Animations</span><input type="checkbox" checked={animations} onChange={e=>setAnimations(e.target.checked)}/></label></section><section><h3>GAMEPLAY</h3><div className="grid2"><label>Global target<input type="number" value={settings.targetScore} readOnly/></label><label>Player timer<input value={formatTime(settings.playerSeconds)} readOnly/></label></div><label>Dhappa timer<input value={`${settings.dhappaSeconds}s`} readOnly/></label><label>Turn direction<input value={settings.direction} readOnly/></label></section><button className="primary" onClick={onClose}>DONE</button></div></div>}
+
+
+function Summary({state,onNext}){
+  const rows=[...(state?.players||[])].sort((a,b)=>(b.roundScore??0)-(a.roundScore??0)||(b.score??0)-(a.score??0));
+  const isHost=state?.me===state?.hostPlayerId;
+  return <div className="summary">
+    <div className="summaryCard">
+      <div className="trophy">🏆</div>
+      <div className="eyebrow">ROUND COMPLETE</div>
+      <h1>ROUND {state?.round}</h1>
+      <div className="winnerScore">TARGET {state?.roundState?.target ?? '—'}</div>
+      {rows.map((p,i)=><div className="summaryRow" key={p.id}>
+        <span>#{i+1}</span>
+        <b>{p.name}</b>
+        <strong>+{p.roundScore??0}</strong>
+        <em>{p.score??0}</em>
+      </div>)}
+      <button className="primary" disabled={!isHost} onClick={onNext}>
+        {isHost?'CONTINUE TO NEXT ROUND →':'WAITING FOR HOST'}
+      </button>
+    </div>
+  </div>;
+}
+
+function GameOver({state}){
+  const winner=state?.players?.find(p=>p.id===state?.winnerId);
+  const rows=[...(state?.players||[])].sort((a,b)=>(b.score??0)-(a.score??0));
+  return <div className="summary">
+    <div className="summaryCard">
+      <div className="trophy">🏆</div>
+      <div className="eyebrow">GAME OVER</div>
+      <h1>{winner?.name||'WINNER'}</h1>
+      <div className="winnerScore">FINAL SCORE · {winner?.score??0}</div>
+      {rows.map((p,i)=><div className="summaryRow" key={p.id}>
+        <span>#{i+1}</span>
+        <b>{p.name}</b>
+        <strong>{p.score??0}</strong>
+        <em>PTS</em>
+      </div>)}
+    </div>
+  </div>;
+}

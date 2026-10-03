@@ -407,6 +407,7 @@ export class CombineRoom extends DurableObject {
       online: online.has(p.id)
     }));
     return {
+      serverNow: now,
       code: this.room.code,
       phase: this.room.phase,
       round: this.room.round,
