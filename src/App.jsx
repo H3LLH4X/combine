@@ -391,7 +391,7 @@ function CombineApp(){
         gain.gain.setValueAtTime(Math.max(.015,ui.volume*.045),ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.045);
         osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+.05);
-        setTimeout(()=>ctx.close?.(),100);
+        setTimeout(()=>{try{if(typeof ctx.close==='function') ctx.close();}catch{}},100);
       }catch{}
     };
     document.addEventListener('click',click,true);
@@ -434,8 +434,6 @@ function CombineApp(){
   function clearSelected(){setSelected([]);setExpressionError('')}
   function undoChallenge(){setChallengeSelected(s=>s.slice(0,-1));setExpressionError('')}
   function clearChallenge(){setChallengeSelected([]);setExpressionError('')}
-  function submitExpression(indices,targetHand){const cards=indices.map(i=>targetHand[i]);const value=evalLocal(cards); if(value===null){setExpressionError('Invalid expression. Use at least one number and one operator.');return false} if(Math.abs(value-(roundState.target))>1e-9){setExpressionError(`Expression = ${value}; target = ${roundState.target}.`);return false}setExpressionError('');return true}
-
   // After leaving, the socket clears state asynchronously. Never render a room
   // view with null state during that transition; go straight back to the menu.
   if(view==='menu' || !state) return <div className="menuShell" style={getShellStyle(ui)}>
@@ -493,10 +491,10 @@ function CombineApp(){
         </div>
         {targetPick.length>0&&<div className="chooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!==me?.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}></span>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
       </section>
-      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(state.roundState.events||[]).slice(-8).reverse().map((e,i)=><div key={i}><b>{players.find(p=>p.id===e.playerId)?.name||'Player'}</b><span>{e.type==='win'?'WON':e.type==='kick'?'KICKED':e.type.toUpperCase()}</span><em>{e.points>0?`+${e.points}`:'0'}</em></div>)}</div></aside>
+      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(Array.isArray(state.roundState.events)?state.roundState.events:[]).slice(-8).reverse().map((e,i)=>{const eventType=String(e?.type??'EVENT');const points=Number(e?.points)||0;return <div key={i}><b>{players.find(p=>p.id===e?.playerId)?.name||'Player'}</b><span>{eventType==='win'?'WON':eventType==='kick'?'KICKED':eventType.toUpperCase()}</span><em>{points>0?`+${points}`:'0'}</em></div>})}</div></aside>
     </main>
 
-    {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:challengeSelected.map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
+    {state.dhappa&&<ChallengeErrorBoundary onClose={()=>act('cancelChallenge')}><ChallengeModal key={`${state.dhappa.startedAt||'dhappa'}-${state.dhappa.mode||'mode'}`} state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:(Array.isArray(challengeSelected)?challengeSelected:[]).map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} /></ChallengeErrorBoundary>}
     {showSettings&&<Settings settings={state?.settings||settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={false} onClose={()=>setShowSettings(false)} onLeave={()=>{if(window.confirm('Leave this room?')) leaveRoom()}} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
   </div>
 }
@@ -538,13 +536,26 @@ function Lobby({state,me,onStart,onLeave}){
   </div></div>;
 }
 
+class ChallengeErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={error:null}}
+  static getDerivedStateFromError(error){return {error}}
+  componentDidCatch(error,info){console.error('Combine challenge render error:',error,info?.componentStack)}
+  render(){
+    if(this.state.error){
+      const reset=()=>this.setState({error:null});
+      return <div className="overlay"><div className="challenge"><div className="chHead"><span>DHAPPA ERROR</span><b>!</b></div><div className="challengeTitle">EXPRESSION SCREEN COULD NOT RENDER</div><p>{String(this.state.error?.message||'Unknown challenge error')}</p><button className="primary" onClick={reset}>RETRY SCREEN</button><button className="cancel" onClick={()=>{if(typeof this.props.onClose==='function') this.props.onClose()}}>CLOSE CHALLENGE</button></div></div>;
+    }
+    return this.props.children;
+  }
+}
+
 function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClear,onSubmit,onCancel,dhappaRemaining}){
   const safeCancel=typeof onCancel==='function' ? onCancel : ()=>{};
   const safeToggle=typeof onToggle==='function' ? onToggle : ()=>{};
   const safeUndo=typeof onUndo==='function' ? onUndo : ()=>{};
   const safeClear=typeof onClear==='function' ? onClear : ()=>{};
   const safeSubmit=typeof onSubmit==='function' ? onSubmit : ()=>{};
-  const safeSelection=Array.isArray(selection) ? selection : [];
+  const safeSelection=(Array.isArray(selection) ? selection : []).filter(i=>Number.isInteger(i)&&i>=0);
   const dh=state?.dhappa && typeof state.dhappa==='object' ? state.dhappa : null;
   const roundState=state?.roundState && typeof state.roundState==='object' ? state.roundState : {target:0,finishCount:0};
   if(!target) return <div className="overlay"><div className="challenge"><div className="chHead"><span>DHAPPA!</span><b>!</b></div><div className="challengeTitle">WAITING FOR GAME STATE</div><p>The expression challenge opened, but the target player's cards have not arrived yet.</p><button className="primary" onClick={()=>safeCancel()}>CLOSE</button></div></div>;
@@ -552,7 +563,7 @@ function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClea
   const targetIsMe=target.id===me?.id;
   const callerIsMe=caller?.id===me?.id;
   const expressionHand=Array.isArray(target?.hand) ? target.hand : [];
-  const val=evalLocal(safeSelection.map(i=>expressionHand[i]));
+  const val=evalLocal(safeSelection.filter(i=>Number.isInteger(i)&&i>=0&&i<expressionHand.length).map(i=>expressionHand[i]));
   const correct=val!==null&&Math.abs(val-Number(roundState.target))<1e-9;
   const canEdit=mode==='callout'?callerIsMe:targetIsMe;
   const title=mode==='callout' ? `CALL ON ${String(target.name || 'PLAYER').toUpperCase()}` : 'MAKE THE TARGET';
