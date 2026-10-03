@@ -8,7 +8,7 @@ const DEFAULT_SERVER_BASE = 'https://combine.clockcombine.workers.dev';
 const WS_BASE = (import.meta.env.VITE_WS_URL || DEFAULT_SERVER_BASE).replace(/\/$/, '');
 const PLACE_POINTS = [5,3,2,1,1];
 
-function formatTime(s){const n=Math.max(0,Number(s)||0);return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
+function formatTime(s){const n=Math.max(0,Math.floor(Number(s)||0));return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
 function evalLocal(cards){
   let joined='';
   for(const c of cards) joined += c;
@@ -218,7 +218,9 @@ export default function App(){
   function clearChallenge(){setChallengeSelected([]);setExpressionError('')}
   function submitExpression(indices,targetHand){const cards=indices.map(i=>targetHand[i]);const value=evalLocal(cards); if(value===null){setExpressionError('Invalid expression. Use at least one number and one operator.');return false} if(Math.abs(value-(state.roundState.target))>1e-9){setExpressionError(`Expression = ${value}; target = ${state.roundState.target}.`);return false}setExpressionError('');return true}
 
-  if(view==='menu') return <>
+  // After leaving, the socket clears state asynchronously. Never render a room
+  // view with null state during that transition; go straight back to the menu.
+  if(view==='menu' || !state) return <>
     {messages.length>0&&<div className="toast menuToast">{messages[0]}</div>}
     <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />
     {showSettings&&<Settings settings={settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
@@ -227,8 +229,16 @@ export default function App(){
   if(view==='roundSummary') return <Summary state={state} onNext={()=>{if(me?.id===state.hostPlayerId)act('nextRound')}} />;
   if(view==='gameOver') return <GameOver state={state} />;
 
+  function leaveRoom(){
+    setShowSettings(false);
+    setTargetPick([]);
+    setSelected([]);
+    setChallengeSelected([]);
+    act('leaveRoom');
+  }
+
   return <div className={`app ${animations?'':'no-anim'}`}>
-    <header className="topbar"><div className="brand">COMBINE <span>ONLINE</span></div><div className="roomtag">ROOM <b>{state?.code}</b></div><div className="topBtns"><button onClick={()=>setShowSettings(true)}>⚙ SETTINGS</button></div></header>
+    <header className="topbar"><div className="brand">COMBINE <span>ONLINE</span></div><div className="roomtag">ROOM <b>{state?.code}</b></div><div className="topBtns"><button onClick={()=>setShowSettings(true)}>⚙ SETTINGS</button><button className="leaveTop" onClick={()=>{if(window.confirm('Leave this room?')) leaveRoom()}}>LEAVE ROOM</button></div></header>
     {messages.length>0&&<div className="toast">{messages[0]}</div>}
     <main className="game">
       <section className="board">
@@ -268,7 +278,7 @@ export default function App(){
     </main>
 
     {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:challengeSelected.map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
-    {showSettings&&<Settings settings={state?.settings||settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
+    {showSettings&&<Settings settings={state?.settings||settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} onLeave={()=>{if(window.confirm('Leave this room?')) leaveRoom()}} />}
   </div>
 }
 
@@ -321,7 +331,7 @@ function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClea
   </div></div>
 }
 
-function Settings({settings,sound,setSound,animations,setAnimations,onClose}){return <div className="overlay"><div className="settings"><div className="setTitle">SETTINGS <button onClick={onClose}>✕</button></div><section><h3>AUDIO</h3><label className="switch"><span>Sound effects</span><input type="checkbox" checked={sound} onChange={e=>setSound(e.target.checked)}/></label></section><section><h3>VIDEO</h3><label className="switch"><span>Animations</span><input type="checkbox" checked={animations} onChange={e=>setAnimations(e.target.checked)}/></label></section><section><h3>GAMEPLAY</h3><div className="grid2"><label>Global target<input type="number" value={settings.targetScore} readOnly/></label><label>Player timer<input value={formatTime(settings.playerSeconds)} readOnly/></label></div><label>Dhappa timer<input value={`${settings.dhappaSeconds}s`} readOnly/></label><label>Turn direction<input value={settings.direction} readOnly/></label></section><button className="primary" onClick={onClose}>DONE</button></div></div>}
+function Settings({settings,sound,setSound,animations,setAnimations,onClose,onLeave}){return <div className="overlay"><div className="settings"><div className="setTitle">SETTINGS <button onClick={onClose}>✕</button></div><section><h3>AUDIO</h3><label className="switch"><span>Sound effects</span><input type="checkbox" checked={sound} onChange={e=>setSound(e.target.checked)}/></label></section><section><h3>VIDEO</h3><label className="switch"><span>Animations</span><input type="checkbox" checked={animations} onChange={e=>setAnimations(e.target.checked)}/></label></section><section><h3>GAMEPLAY</h3><div className="grid2"><label>Global target<input type="number" value={settings.targetScore} readOnly/></label><label>Player timer<input value={formatTime(settings.playerSeconds)} readOnly/></label></div><label>Dhappa timer<input value={`${settings.dhappaSeconds}s`} readOnly/></label><label>Turn direction<input value={settings.direction} readOnly/></label></section>{onLeave&&<button className="leaveRoomBtn" onClick={onLeave}>LEAVE ROOM</button>}<button className="primary" onClick={onClose}>DONE</button></div></div>}
 
 
 function Summary({state,onNext}){
