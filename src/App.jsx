@@ -7,6 +7,98 @@ const WS_PATH = '/ws';
 const DEFAULT_SERVER_BASE = 'https://combine.clockcombine.workers.dev';
 const WS_BASE = (import.meta.env.VITE_WS_URL || DEFAULT_SERVER_BASE).replace(/\/$/, '');
 const PLACE_POINTS = [5,3,2,1,1];
+const UI_SETTINGS_KEY = 'combine-ui-settings';
+const DEFAULT_UI = {
+  sound: true,
+  volume: 0.55,
+  animations: true,
+  matrixBackground: true,
+  backgroundImage: '',
+  backgroundMode: 'matrix',
+  name: 'Player',
+};
+
+function loadUiSettings(){
+  try {
+    const saved = JSON.parse(localStorage.getItem(UI_SETTINGS_KEY) || 'null');
+    return {...DEFAULT_UI, ...(saved || {})};
+  } catch {
+    return {...DEFAULT_UI};
+  }
+}
+
+function persistUiSettings(value){
+  try { localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify(value)); } catch {}
+}
+
+function getShellStyle(ui){
+  if (ui?.backgroundMode === 'none') return {background:'#070314'};
+  if (!ui?.backgroundImage || ui.backgroundMode !== 'custom') return undefined;
+  return {
+    backgroundImage: `linear-gradient(rgba(10,6,24,.72),rgba(4,2,16,.82)), url(${ui.backgroundImage})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundAttachment: 'fixed',
+  };
+}
+
+function MatrixRain({enabled}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!enabled) return;
+    const canvas=ref.current;
+    if(!canvas) return;
+    const ctx=canvas.getContext('2d');
+    if(!ctx) return;
+    const chars='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/=()';
+    let raf=0; let columns=0; let drops=[]; let width=0; let height=0;
+    const resize=()=>{
+      const dpr=Math.min(window.devicePixelRatio||1,2);
+      width=window.innerWidth; height=window.innerHeight;
+      canvas.width=Math.floor(width*dpr); canvas.height=Math.floor(height*dpr);
+      canvas.style.width=`${width}px`; canvas.style.height=`${height}px`;
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.font='14px monospace';
+      columns=Math.ceil(width/14);
+      drops=Array.from({length:columns},()=>Math.random()*height/14);
+    };
+    const frame=()=>{
+      ctx.fillStyle='rgba(5, 2, 18, 0.075)';
+      ctx.fillRect(0,0,width,height);
+      ctx.font='14px monospace';
+      for(let i=0;i<columns;i++){
+        const x=i*14;
+        const y=drops[i]*14;
+        const ch=chars[(Math.random()*chars.length)|0];
+        const hue=175 + ((i*13 + Math.floor(y/14))%120);
+        ctx.fillStyle=`hsla(${hue}, 100%, 70%, .82)`;
+        ctx.fillText(ch,x,y);
+        if(y>height+30 && Math.random()>.975) drops[i]=0;
+        drops[i]+=0.46 + Math.random()*.5;
+      }
+      raf=requestAnimationFrame(frame);
+    };
+    resize();
+    window.addEventListener('resize',resize);
+    ctx.fillStyle='#050212'; ctx.fillRect(0,0,width,height);
+    raf=requestAnimationFrame(frame);
+    return()=>{cancelAnimationFrame(raf);window.removeEventListener('resize',resize)};
+  },[enabled]);
+  if(!enabled) return null;
+  return <canvas ref={ref} className="matrixRain" aria-hidden="true"/>;
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={error:null}}
+  static getDerivedStateFromError(error){return {error}}
+  componentDidCatch(error){console.error('Combine UI error:',error)}
+  render(){
+    if(this.state.error){
+      return <div className="fatalError"><div className="fatalCard"><div className="eyebrow">COMBINE ERROR</div><h1>SCREEN COULD NOT RENDER</h1><p>{this.state.error?.message || 'Unknown error'}</p><button className="primary" onClick={()=>location.reload()}>RELOAD</button></div></div>;
+    }
+    return this.props.children;
+  }
+}
 
 function formatTime(s){const n=Math.max(0,Math.floor(Number(s)||0));return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`}
 function evalLocal(cards){
@@ -171,20 +263,43 @@ function useGameSocket(){
   return {connected,state,session,send,messages,serverOffset};
 }
 
-export default function App(){
+function CombineApp(){
   const {connected,state,session,send,messages,serverOffset}=useGameSocket();
   const [view,setView]=useState('menu');
-  const [name,setName]=useState('Player');
+  const [name,setName]=useState(()=>loadUiSettings().name || 'Player');
   const [roomCode,setRoomCode]=useState('');
   const [settings,setSettings]=useState({targetScore:11,playerSeconds:120,dhappaSeconds:30,direction:'counterclockwise'});
   const [targetPick,setTargetPick]=useState([]); const [selected,setSelected]=useState([]); const [challengeSelected,setChallengeSelected]=useState([]);
-  const [showSettings,setShowSettings]=useState(false); const [sound,setSound]=useState(true); const [animations,setAnimations]=useState(true);
+  const [showSettings,setShowSettings]=useState(false);
+  const [ui,setUi]=useState(loadUiSettings);
+  useEffect(()=>persistUiSettings({...ui,name}),[ui,name]);
+  const updateUi=(patch)=>setUi(v=>({...v,...patch}));
   const [expressionError,setExpressionError]=useState('');
   const [localNow,setLocalNow]=useState(Date.now());
   useEffect(()=>{const id=setInterval(()=>setLocalNow(Date.now()),100);return()=>clearInterval(id)},[]);
+  useEffect(()=>{
+    if(!ui.sound) return;
+    const click=()=>{
+      try{
+        const AC=window.AudioContext||window.webkitAudioContext;
+        if(!AC) return;
+        const ctx=new AC();
+        const osc=ctx.createOscillator();
+        const gain=ctx.createGain();
+        osc.frequency.value=ui.volume<.3?420:560;
+        osc.type='square';
+        gain.gain.setValueAtTime(Math.max(.015,ui.volume*.045),ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.045);
+        osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+.05);
+        setTimeout(()=>ctx.close?.(),100);
+      }catch{}
+    };
+    document.addEventListener('click',click,true);
+    return()=>document.removeEventListener('click',click,true);
+  },[ui.sound,ui.volume]);
   const clockNow=localNow+serverOffset;
   const me=state?.players?.find(p=>p.id===state.me); const active=state?.players?.find(p=>p.id===state.roundState?.activeId); const isMyTurn=!!me&&!!active&&me.id===active.id;
-  const challengeTarget=state?.dhappa?state.players.find(p=>p.id===state.dhappa.targetId):null;
+  const challengeTarget=state?.dhappa ? (state.players.find(p=>p.id===state.dhappa.targetId) || (state.dhappa.mode==='attempt' ? me : null)) : null;
   const caller=state?.dhappa?state.players.find(p=>p.id===state.dhappa.callerId):null;
   const sorted=[...(state?.players||[])].sort((a,b)=>b.score-a.score);
   function displayRemaining(p){
@@ -220,11 +335,12 @@ export default function App(){
 
   // After leaving, the socket clears state asynchronously. Never render a room
   // view with null state during that transition; go straight back to the menu.
-  if(view==='menu' || !state) return <>
+  if(view==='menu' || !state) return <div className="menuShell" style={getShellStyle(ui)}>
+    <MatrixRain enabled={ui.matrixBackground && ui.backgroundMode !== 'custom'} />
     {messages.length>0&&<div className="toast menuToast">{messages[0]}</div>}
     <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />
-    {showSettings&&<Settings settings={settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} />}
-  </>;
+    {showSettings&&<Settings settings={settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={!state} onClose={()=>setShowSettings(false)} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
+  </div>;
   if(view==='lobby') return <Lobby state={state} me={me} onStart={startGame} onLeave={()=>act('leaveRoom')} />;
   if(view==='roundSummary') return <Summary state={state} onNext={()=>{if(me?.id===state.hostPlayerId)act('nextRound')}} />;
   if(view==='gameOver') return <GameOver state={state} />;
@@ -237,7 +353,7 @@ export default function App(){
     act('leaveRoom');
   }
 
-  return <div className={`app ${animations?'':'no-anim'}`}>
+  return <div className={`app ${ui.animations?'':'no-anim'}`} style={getShellStyle(ui)}>
     <header className="topbar"><div className="brand">COMBINE <span>ONLINE</span></div><div className="roomtag">ROOM <b>{state?.code}</b></div><div className="topBtns"><button onClick={()=>setShowSettings(true)}>⚙ SETTINGS</button><button className="leaveTop" onClick={()=>{if(window.confirm('Leave this room?')) leaveRoom()}}>LEAVE ROOM</button></div></header>
     {messages.length>0&&<div className="toast">{messages[0]}</div>}
     <main className="game">
@@ -278,12 +394,12 @@ export default function App(){
     </main>
 
     {state.dhappa&&<ChallengeModal state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:challengeSelected.map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} />}
-    {showSettings&&<Settings settings={state?.settings||settings} sound={sound} setSound={setSound} animations={animations} setAnimations={setAnimations} onClose={()=>setShowSettings(false)} onLeave={()=>{if(window.confirm('Leave this room?')) leaveRoom()}} />}
+    {showSettings&&<Settings settings={state?.settings||settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={false} onClose={()=>setShowSettings(false)} onLeave={()=>{if(window.confirm('Leave this room?')) leaveRoom()}} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
   </div>
 }
 
 async function connectResume(send,session){if(session?.roomCode&&session?.playerId){await send({type:'rejoinRoom',code:session.roomCode,playerId:session.playerId});}}
-function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connected,hasSession,savedRoom,settings,setSettings,onSettings}){return <div className="menu"><div className="menuPanel"><div className="logo">COMBINE</div><div className="tag">MATH · CARDS · CHAOS</div><div className="conn">● {connected?'SERVER CONNECTED':'READY TO CONNECT'}</div><label>YOUR NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)}/></label><button className="primary" onClick={onCreate}>HOST GAME</button>{hasSession&&<button className="secondary resumeBtn" onClick={onResume}>RESUME ROOM · {savedRoom}</button>}<div className="joinRow"><input placeholder="ROOM CODE" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())}/><button onClick={onJoin}>JOIN</button></div><button className="secondary" onClick={onSettings}>SETTINGS</button><div className="menuHelp">Host creates a room. Everyone joins with the same six-character code.</div></div></div>}
+function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connected,hasSession,savedRoom,onSettings}){return <div className="menu"><div className="menuPanel"><div className="logo">COMBINE</div><div className="tag">MATH · CARDS · CHAOS</div><div className="conn">● {connected?'SERVER CONNECTED':'READY TO CONNECT'}</div><label>YOUR NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)}/></label><button className="primary" onClick={onCreate}>HOST GAME</button>{hasSession&&<button className="secondary resumeBtn" onClick={onResume}>RESUME ROOM · {savedRoom}</button>}<div className="joinRow"><input placeholder="ROOM CODE" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())}/><button onClick={onJoin}>JOIN</button></div><button className="secondary" onClick={onSettings}>SETTINGS</button><div className="menuHelp">Host creates a room. Everyone joins with the same six-character code.</div></div></div>}
 function Lobby({state,me,onStart,onLeave}){
   const [qr,setQr]=useState('');
   const [copied,setCopied]=useState(false);
@@ -292,7 +408,7 @@ function Lobby({state,me,onStart,onLeave}){
   async function copyLink(){try{await navigator.clipboard.writeText(joinUrl);setCopied(true);setTimeout(()=>setCopied(false),1200);}catch{}}
   return <div className="lobby"><div className="lobbyCard"><div className="eyebrow">WAITING ROOM</div><div className="roomBig">{state.code}</div><div className="share">Share the code or scan the QR code to join. No URL typing required.</div>{qr&&<img className="qr" src={qr} alt="Scan to join Combine room" /> }<div className="shareActions"><button className="secondary" onClick={copyLink}>{copied?'COPIED ✓':'COPY JOIN LINK'}</button></div>{state.players.map(p=><div className="lobbyPlayer" key={p.id}><i style={{background:p.color}}></i><b>{p.name}</b>{p.id===state.hostPlayerId&&<span>HOST</span>}{p.id===me?.id&&<small>YOU</small>}</div>)}<button className="primary" disabled={me?.id!==state.hostPlayerId||state.players.length<2} onClick={onStart}>{state.players.length<2?'WAITING FOR PLAYERS':'START GAME →'}</button><button className="link" onClick={onLeave}>LEAVE ROOM</button></div></div>}
 function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClear,onSubmit,onCancel}){
-  if(!target) return null;
+  if(!target) return <div className="overlay"><div className="challenge"><div className="chHead"><span>DHAPPA!</span><b>!</b></div><div className="challengeTitle">WAITING FOR GAME STATE</div><p>The expression challenge opened, but the target player's cards have not arrived yet.</p><button className="primary" onClick={()=>onCancel()}>CLOSE</button></div></div>;
   const mode=state.dhappa?.mode;
   const targetIsMe=target.id===me?.id;
   const callerIsMe=caller?.id===me?.id;
@@ -331,8 +447,76 @@ function ChallengeModal({state,me,target,caller,selection,onToggle,onUndo,onClea
   </div></div>
 }
 
-function Settings({settings,sound,setSound,animations,setAnimations,onClose,onLeave}){return <div className="overlay"><div className="settings"><div className="setTitle">SETTINGS <button onClick={onClose}>✕</button></div><section><h3>AUDIO</h3><label className="switch"><span>Sound effects</span><input type="checkbox" checked={sound} onChange={e=>setSound(e.target.checked)}/></label></section><section><h3>VIDEO</h3><label className="switch"><span>Animations</span><input type="checkbox" checked={animations} onChange={e=>setAnimations(e.target.checked)}/></label></section><section><h3>GAMEPLAY</h3><div className="grid2"><label>Global target<input type="number" value={settings.targetScore} readOnly/></label><label>Player timer<input value={formatTime(settings.playerSeconds)} readOnly/></label></div><label>Dhappa timer<input value={`${settings.dhappaSeconds}s`} readOnly/></label><label>Turn direction<input value={settings.direction} readOnly/></label></section>{onLeave&&<button className="leaveRoomBtn" onClick={onLeave}>LEAVE ROOM</button>}<button className="primary" onClick={onClose}>DONE</button></div></div>}
+function Settings({settings,setSettings,name,setName,ui,updateUi,allowGameplayEdit,onClose,onLeave,onReset}){
+  const [tab,setTab]=useState('general');
+  const setGame=(patch)=>setSettings(v=>({...v,...patch}));
+  async function chooseFile(e){
+    const file=e.target.files?.[0];
+    if(!file) return;
+    if(!file.type.startsWith('image/')) return;
+    if(file.size>2_000_000){alert('Please choose an image under 2 MB.');return;}
+    const reader=new FileReader();
+    reader.onload=()=>updateUi({backgroundImage:String(reader.result),backgroundMode:'custom'});
+    reader.readAsDataURL(file);
+  }
+  return <div className="overlay">
+    <div className="settings settingsWide">
+      <div className="setTitle"><span>SETTINGS</span><button onClick={onClose}>✕</button></div>
+      <div className="settingsTabs">
+        {['general','background','audio','video','gameplay'].map(t=><button key={t} className={tab===t?'active':''} onClick={()=>setTab(t)}>{t.toUpperCase()}</button>)}
+      </div>
 
+      {tab==='general'&&<section className="settingsSection">
+        <h3>GENERAL</h3>
+        <label>PLAYER NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)} placeholder="Your display name" /></label>
+        <label className="switch"><span>Vapourwave theme</span><b className="settingPill">ACTIVE</b></label>
+        <button className="secondary" onClick={onReset}>RESET LOCAL UI SETTINGS</button>
+      </section>}
+
+      {tab==='background'&&<section className="settingsSection">
+        <h3>CUSTOM BACKGROUNDS</h3>
+        <label className="switch"><span>Animated letters + numbers</span><input type="checkbox" checked={ui.matrixBackground} onChange={e=>updateUi({matrixBackground:e.target.checked,backgroundMode:e.target.checked?'matrix':ui.backgroundMode})}/></label>
+        <div className="backgroundChoices">
+          <button className={ui.backgroundMode==='matrix'?'selected':''} onClick={()=>updateUi({backgroundMode:'matrix',matrixBackground:true})}>MATRIX</button>
+          <button className={ui.backgroundMode==='none'?'selected':''} onClick={()=>updateUi({backgroundMode:'none',matrixBackground:false})}>PLAIN</button>
+          <button className={ui.backgroundMode==='custom'?'selected':''} disabled={!ui.backgroundImage} onClick={()=>ui.backgroundImage&&updateUi({backgroundMode:'custom'})}>CUSTOM IMAGE</button>
+        </div>
+        <label>CUSTOM IMAGE URL<input value={ui.backgroundImage?.startsWith('data:')?'':ui.backgroundImage} onChange={e=>updateUi({backgroundImage:e.target.value.trim(),backgroundMode:e.target.value.trim()?'custom':'matrix'})} placeholder="https://.../background.jpg" /></label>
+        <label>UPLOAD IMAGE<input type="file" accept="image/*" onChange={chooseFile} /></label>
+        {ui.backgroundImage&&<button className="secondary" onClick={()=>updateUi({backgroundImage:'',backgroundMode:'matrix',matrixBackground:true})}>REMOVE CUSTOM BACKGROUND</button>}
+        <p className="settingsHint">Custom images are stored only in this browser. The default menu uses a live stream of changing letters, numbers and operators.</p>
+      </section>}
+
+      {tab==='audio'&&<section className="settingsSection">
+        <h3>AUDIO</h3>
+        <label className="switch"><span>Sound effects</span><input type="checkbox" checked={ui.sound} onChange={e=>updateUi({sound:e.target.checked})}/></label>
+        <label>VOLUME<input type="range" min="0" max="1" step="0.05" value={ui.volume} onChange={e=>updateUi({volume:Number(e.target.value)})}/></label>
+        <p className="settingsHint">UI clicks use a small synthesized confirmation sound. No external audio files are loaded.</p>
+      </section>}
+
+      {tab==='video'&&<section className="settingsSection">
+        <h3>VIDEO</h3>
+        <label className="switch"><span>Interface animations</span><input type="checkbox" checked={ui.animations} onChange={e=>updateUi({animations:e.target.checked})}/></label>
+        <label className="switch"><span>Moving background</span><input type="checkbox" checked={ui.matrixBackground} onChange={e=>updateUi({matrixBackground:e.target.checked})}/></label>
+        <p className="settingsHint">Turn these off for a lower-motion interface.</p>
+      </section>}
+
+      {tab==='gameplay'&&<section className="settingsSection">
+        <h3>GAMEPLAY</h3>
+        <div className="grid2">
+          <label>GLOBAL TARGET<input type="number" min="1" value={settings.targetScore} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({targetScore:Math.max(1,Number(e.target.value)||1)})}/></label>
+          <label>PLAYER TIMER · SEC<input type="number" min="1" value={settings.playerSeconds} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({playerSeconds:Math.max(1,Number(e.target.value)||1)})}/></label>
+        </div>
+        <label>DHAPPA TIMER · SEC<input type="number" min="5" value={settings.dhappaSeconds} readOnly={!allowGameplayEdit} onChange={e=>allowGameplayEdit&&setGame({dhappaSeconds:Math.max(5,Number(e.target.value)||30)})}/></label>
+        <label>TURN DIRECTION<select value={settings.direction} disabled={!allowGameplayEdit} onChange={e=>setGame({direction:e.target.value})}><option value="counterclockwise">COUNTERCLOCKWISE</option><option value="clockwise">CLOCKWISE</option></select></label>
+        {!allowGameplayEdit&&<p className="settingsHint">Game settings are locked after the room is created so the active game rules cannot change mid-round.</p>}
+      </section>}
+
+      {onLeave&&<button className="leaveRoomBtn" onClick={onLeave}>LEAVE ROOM</button>}
+      <button className="primary" onClick={onClose}>DONE</button>
+    </div>
+  </div>;
+}
 
 function Summary({state,onNext}){
   const rows=[...(state?.players||[])].sort((a,b)=>(b.roundScore??0)-(a.roundScore??0)||(b.score??0)-(a.score??0));
@@ -373,4 +557,8 @@ function GameOver({state}){
       </div>)}
     </div>
   </div>;
+}
+
+export default function App(){
+  return <AppErrorBoundary><CombineApp /></AppErrorBoundary>;
 }
