@@ -12,13 +12,17 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "qrcode": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "ws": "latest",
-    "qrcode": "latest"
+    "vite": "latest",
+    "ws": "latest"
   },
   "devDependencies": {
-    "wrangler": "latest"
+    "wrangler": "^4.147.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20261001.1": true
   }
 }
