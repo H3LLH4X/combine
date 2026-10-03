@@ -63,7 +63,7 @@ function MatrixRain({enabled}){
 
     const randomChar=()=>chars[(Math.random()*chars.length)|0];
     const randomSize=()=>48 + Math.random()*74;
-    const randomSpeed=0.8 + Math.random()*1.8;
+    const randomSpeed=()=>0.8 + Math.random()*1.8;
 
     const seedGlyphs=()=>{
       const count=Math.max(26, Math.min(76, Math.round((width*height)/19000)));
