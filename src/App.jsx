@@ -6,6 +6,7 @@ const WS_PATH = '/ws';
 const DEFAULT_SERVER_BASE = 'https://combine.clockcombine.workers.dev';
 const WS_BASE = String(import.meta.env.VITE_WS_URL || DEFAULT_SERVER_BASE).replace(/\/$/, '');
 const PLACE_POINTS = [5,3,2,1,1];
+const MAX_HAND_CARDS = 15;
 const UI_SETTINGS_KEY = 'combine-ui-settings';
 const DEFAULT_UI = {
   sound: true,
@@ -258,30 +259,46 @@ function targetCardsFromNumber(target){
 
 function findBotExpression(hand,target){
   const cards=Array.isArray(hand)?hand:[];
-  const n=Math.min(cards.length,6);
+  const n=cards.length;
   if(n<3) return null;
-  const indices=Array.from({length:n},(_,i)=>i);
+
+  // Search the whole hand (up to the 15-card limit), while capping the
+  // expression at six selected cards so bot turns remain responsive.
+  const maxLen=Math.min(n,6);
+  const indices=Array.from({length:n},(_,i)=>i).sort((a,b)=>{
+    const na=/^\d$/.test(String(cards[a]));
+    const nb=/^\d$/.test(String(cards[b]));
+    return Number(nb)-Number(na);
+  });
   const used=new Array(n).fill(false);
   let found=null;
+  let nodes=0;
+  const NODE_LIMIT=250000;
 
-  function dfs(seq){
-    if(found) return;
-    if(seq.length>=3){
+  function dfs(seq,hasNum,hasOp){
+    if(found || nodes++>=NODE_LIMIT) return;
+    if(seq.length>=3 && hasNum && hasOp){
       const value=evalLocal(seq.map(i=>cards[i]));
-      if(value!==null && Math.abs(value-Number(target))<1e-9){ found=seq.slice(); return; }
+      if(value!==null && Math.abs(value-Number(target))<1e-9){
+        found=seq.slice();
+        return;
+      }
     }
-    if(seq.length>=n) return;
+    if(seq.length>=maxLen) return;
+
     for(const i of indices){
       if(used[i]) continue;
       used[i]=true;
       seq.push(i);
-      dfs(seq);
+      const isNum=/^\d$/.test(String(cards[i]));
+      dfs(seq,hasNum||isNum,hasOp||!isNum);
       seq.pop();
       used[i]=false;
-      if(found) return;
+      if(found || nodes>=NODE_LIMIT) return;
     }
   }
-  dfs([]);
+
+  dfs([],false,false);
   return found;
 }
 
@@ -714,7 +731,7 @@ function CombineApp(){
               })}
               {!hand.length&&<span className="seatEmpty">EMPTY</span>}
             </div>
-            <div className="seatMeta">{p.alive?`${formatTime(displayRemaining(p))} · ${hand.length} CARDS`:'OUT · 0 PTS'}</div>
+            <div className="seatMeta">{p.alive?`${formatTime(displayRemaining(p))} · ${hand.length}/${MAX_HAND_CARDS} CARDS`:'OUT · 0 PTS'}</div>
           </div>;
         })}
 
@@ -733,23 +750,23 @@ function CombineApp(){
           </div>
 
           <div className="drawZone">
-            <button className="drawPile numberPile" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}>
+            <button className="drawPile numberPile" disabled={!isMyTurn||roundState.drawnThisTurn||myHand.length>=MAX_HAND_CARDS||!roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}>
               <span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{roundState.numberCardsLeft} LEFT</small></span>
             </button>
-            <button className="drawPile operatorPile" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}>
+            <button className="drawPile operatorPile" disabled={!isMyTurn||roundState.drawnThisTurn||myHand.length>=MAX_HAND_CARDS||!roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}>
               <span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{roundState.operatorCardsLeft} LEFT</small></span>
             </button>
           </div>
-          <div className="drawHint">{roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW EXACTLY ONE CARD'}</div>
+          <div className="drawHint">{myHand.length>=MAX_HAND_CARDS?'HAND LIMIT REACHED':roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW EXACTLY ONE CARD'}</div>
         </section>
 
         <aside className="tableScoreboard">
           <div className="hudHead"><b>SCOREBOARD</b><span>ROOM {state.code}</span></div>
-          {sorted.map(p=><div className={`hudPlayer ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}>
+          {sorted.map(p=>{const lastAward=[...(roundState?.events||[])].reverse().find(e=>Number(e?.points)>0&&(e?.type==='win'||e?.type==='kick'));return <div className={`hudPlayer ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}>
             <span className="hudDot" style={{background:p.color}}/>
             <div><b>{p.id===me?.id?'YOU':p.name}</b><small>{p.alive?`+${p.roundScore||0} THIS ROUND`:'OUT'}</small></div>
-            <strong>{p.score||0}</strong>
-          </div>)}
+            <strong>{p.score||0}</strong>{lastAward?.playerId===p.id&&<em className="awardPill">+{lastAward.points}</em>}
+          </div>})}
         </aside>
 
         <div className="eventStrip">
@@ -817,6 +834,7 @@ function PracticeGame({initialTarget,playerName,onExit,ui}){
 
   function draw(deckName){
     if(game.roundState.drawnThisTurn){setMessage('DRAW COMPLETE · RESET OR TRY YOUR EXPRESSION');return;}
+    if(hand.length>=MAX_HAND_CARDS){setMessage(`HAND LIMIT REACHED · MAX ${MAX_HAND_CARDS} CARDS`);return;}
     const deck=deckName==='operator'?game.operatorDeck:game.numberDeck;
     if(!deck.length){setMessage('THAT DECK IS EMPTY');return;}
     const card=deck[0];
@@ -843,7 +861,7 @@ function PracticeGame({initialTarget,playerName,onExit,ui}){
       <section className="tableCenter practiceCenter">
         <div className="targetZone"><div className="targetLabel">YOUR TARGET</div><div className="targetCards">{targetDigits.map((c,i)=><div className="targetPhysicalCard" key={i}><span>{c}</span></div>)}</div><div className="targetNumber">{game.roundState.target}</div></div>
         <div className="centerTimer practiceStatus"><div className="turnLabel">{solved?'TARGET COMPLETE':'PRACTICE MODE'}</div><div className="practiceMessage">{message}</div></div>
-        <div className="drawZone"><button className="drawPile numberPile" disabled={game.roundState.drawnThisTurn||!game.numberDeck.length} onClick={()=>draw('number')}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{game.numberDeck.length} LEFT</small></span></button><button className="drawPile operatorPile" disabled={game.roundState.drawnThisTurn||!game.operatorDeck.length} onClick={()=>draw('operator')}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{game.operatorDeck.length} LEFT</small></span></button></div><div className="drawHint">{game.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE CARD'}</div>
+        <div className="drawZone"><button className="drawPile numberPile" disabled={game.roundState.drawnThisTurn||hand.length>=MAX_HAND_CARDS||!game.numberDeck.length} onClick={()=>draw('number')}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{game.numberDeck.length} LEFT</small></span></button><button className="drawPile operatorPile" disabled={game.roundState.drawnThisTurn||hand.length>=MAX_HAND_CARDS||!game.operatorDeck.length} onClick={()=>draw('operator')}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{game.operatorDeck.length} LEFT</small></span></button></div><div className="drawHint">{hand.length>=MAX_HAND_CARDS?'HAND LIMIT REACHED':game.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE CARD'}</div>
       </section>
       <div className="tableSeat seat-bottom isYou activeSeat"><div className="seatName"><span className="seatDot"/><b>YOU</b><em>PRACTICE</em></div><div className="seatAvatar"><span/><span/></div><div className="seatHand">{hand.map((c,i)=><button className={`card tableCard ${/\d/.test(c)?'num':'op'} ${selected.includes(i)?'sel':''}`} key={`${c}-${i}`} onClick={()=>setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])}>{c}</button>)}</div><div className="seatMeta">{hand.length} CARDS</div></div>
       <div className="myDock"><div className="myExpression"><div className="exprPreview">{selected.length?selected.map(i=>hand[i]).join(' '):'SELECT CARDS TO BUILD'}</div>{selected.length>0&&<div className={`exprValue ${value===null?'bad':''}`}>{value===null?'INVALID':`= ${value}`}</div>}</div><div className="dockButtons"><button className="dockBtn" disabled={!selected.length} onClick={()=>setSelected(v=>v.slice(0,-1))}>UNDO</button><button className="dockBtn" disabled={!selected.length} onClick={()=>setSelected([])}>CLEAR</button><button className="dockBtn passBtn" onClick={pass}>RESET TURN</button><button className="dockBtn attemptBtn" onClick={attempt}>ATTEMPT</button><button className="dockBtn dhappaBtn" onClick={clearHand}>CLEAR HAND</button></div></div>
@@ -916,6 +934,8 @@ function SingleplayerGame({initialGame,onExit,ui}){
 
       if(type==='draw'){
         if(g.roundState.drawnThisTurn)return g;
+        const human=g.players.find(p=>p.id==='human');
+        if((human?.hand?.length||0)>=MAX_HAND_CARDS) return g;
         const deck=payload.deck==='operator'?g.operatorDeck:g.numberDeck;
         if(!deck.length)return g;
         const card=deck[0];
@@ -954,7 +974,8 @@ function SingleplayerGame({initialGame,onExit,ui}){
     }
   },[localNow,game.phase,game.dhappa?.expiresAt,game.turnDeadlineAt,game.roundState?.activeId]);
 
-  // Bot AI: draw exactly one, then attempt if it can hit the target; otherwise pass.
+  // Bot AI: draw exactly one, inspect every opponent hand for a valid target expression,
+  // invoke Dhappa automatically when one exists, otherwise attempt with its own hand.
   useEffect(()=>{
     if(game.phase!=='turn'||game.dhappa||active?.id==='human'||!active?.bot) return;
     const botId=active.id; let cancelled=false;
@@ -963,15 +984,45 @@ function SingleplayerGame({initialGame,onExit,ui}){
       setGame(g=>{
         if(g.phase!=='turn'||g.dhappa||g.roundState.activeId!==botId)return g;
         const bot=g.players.find(p=>p.id===botId); if(!bot)return g;
-        const deckPick=Math.random()<0.58?'number':'operator'; const deck=deckPick==='number'?g.numberDeck:g.operatorDeck; if(!deck.length)return advanceLocalTurn(g,botId);
+        if((bot.hand?.length||0)>=MAX_HAND_CARDS){
+          return advanceLocalTurn(g,botId);
+        }
+
+        const deckPick=Math.random()<0.58?'number':'operator';
+        const deck=deckPick==='number'?g.numberDeck:g.operatorDeck;
+        if(!deck.length)return advanceLocalTurn(g,botId);
         const card=deck[0];
         const players2=g.players.map(p=>p.id===botId?{...p,hand:[...p.hand,card]}:p);
-        let next={...g,players:players2,numberDeck:deckPick==='number'?g.numberDeck.slice(1):g.numberDeck,operatorDeck:deckPick==='operator'?g.operatorDeck.slice(1):g.operatorDeck,roundState:{...g.roundState,drawnThisTurn:true,events:[...g.roundState.events,{type:'draw',playerId:botId,deck:deckPick,card,ts:Date.now()}]}};
-        const expr=findBotExpression(players2.find(p=>p.id===botId)?.hand||[],g.roundState.target);
+        let next={...g,
+          players:players2,
+          numberDeck:deckPick==='number'?g.numberDeck.slice(1):g.numberDeck,
+          operatorDeck:deckPick==='operator'?g.operatorDeck.slice(1):g.operatorDeck,
+          roundState:{...g.roundState,drawnThisTurn:true,events:[...g.roundState.events,{type:'draw',playerId:botId,deck:deckPick,card,ts:Date.now()}]}
+        };
+
+        // First look for a profitable Dhappa target among every other living player.
+        const opponents=players2.filter(p=>p.alive && p.id!==botId);
+        const targetHit=opponents.map(p=>({player:p,expr:findBotExpression(p.hand,g.roundState.target)})).find(x=>x.expr);
+        if(targetHit){
+          const target=targetHit.player;
+          return {
+            ...next,
+            dhappa:{mode:'callout',targetId:target.id,callerId:botId,startedAt:Date.now(),expiresAt:Date.now()+30000,seconds:30},
+            turnStartedAt:null,
+            turnDeadlineAt:null,
+            roundState:{...next.roundState,drawnThisTurn:false,events:[...next.roundState.events,{type:'dhappa',playerId:botId,targetId:target.id,points:0,ts:Date.now(),auto:true}]}
+          };
+        }
+
+        const botAfterDraw=next.players.find(p=>p.id===botId);
+        const expr=findBotExpression(botAfterDraw?.hand||[],g.roundState.target);
         if(expr){
-          const pts=[5,3,2,1,1][next.roundState.finishCount]??0;
-          const updated={...next,players:next.players.map(p=>p.id===botId?{...p,roundScore:p.roundScore+pts}:p),roundState:{...next.roundState,finishCount:next.roundState.finishCount+1,events:[...next.roundState.events,{type:'win',playerId:botId,points:pts,ts:Date.now()}]}};
-          setTimeout(()=>setMessage(`${bot.name} found ${expr.map(i=>players2.find(p=>p.id===botId).hand[i]).join(' ')} → ${g.roundState.target}`),0);
+          const pts=PLACE_POINTS[next.roundState.finishCount]??0;
+          const updated={...next,
+            players:next.players.map(p=>p.id===botId?{...p,roundScore:p.roundScore+pts}:p),
+            roundState:{...next.roundState,finishCount:next.roundState.finishCount+1,events:[...next.roundState.events,{type:'win',playerId:botId,points:pts,ts:Date.now()}]}
+          };
+          setTimeout(()=>setMessage(`${bot.name} found ${expr.map(i=>botAfterDraw.hand[i]).join(' ')} → ${g.roundState.target} · +${pts}`),0);
           return eliminateLocal(updated,botId,botId,{});
         }
         return advanceLocalTurn(next,botId);
@@ -979,6 +1030,37 @@ function SingleplayerGame({initialGame,onExit,ui}){
     },900+Math.random()*900);
     return()=>{cancelled=true;clearTimeout(timer)};
   },[game.phase,game.dhappa,active?.id,game.roundState?.activeId]);
+
+  // Automatically resolve a bot-initiated Dhappa using the target player's hand.
+  useEffect(()=>{
+    if(game.phase!=='turn'||!game.dhappa||game.dhappa.mode!=='callout'||game.dhappa.callerId==='human') return;
+    const dhappaId=`${game.dhappa.callerId}:${game.dhappa.targetId}:${game.dhappa.startedAt}`;
+    const timer=setTimeout(()=>{
+      setGame(g=>{
+        if(!g.dhappa||g.dhappa.mode!=='callout'||g.dhappa.callerId==='human'||`${g.dhappa.callerId}:${g.dhappa.targetId}:${g.dhappa.startedAt}`!==dhappaId) return g;
+        const caller=g.players.find(p=>p.id===g.dhappa.callerId);
+        const target=g.players.find(p=>p.id===g.dhappa.targetId);
+        if(!caller||!target||!target.alive) return g;
+        const expr=findBotExpression(target.hand||[],g.roundState.target);
+        if(expr){
+          const withPts={
+            ...g,
+            dhappa:null,
+            turnStartedAt:null,
+            turnDeadlineAt:null,
+            players:g.players.map(p=>p.id===caller.id?{...p,roundScore:(p.roundScore||0)+3}:p),
+            roundState:{...g.roundState,drawnThisTurn:false,events:[...g.roundState.events,{type:'kick',playerId:caller.id,targetId:target.id,points:3,ts:Date.now(),auto:true}]}
+          };
+          setTimeout(()=>setMessage(`${caller.name} called DHAPPA on ${target.name} · ${expr.map(i=>target.hand[i]).join(' ')} → ${g.roundState.target} · +3`),0);
+          return eliminateLocal(withPts,target.id,caller.id,{});
+        }
+        // This should be rare because bots pre-check the target, but fail safely.
+        const fail={...g,dhappa:null,turnStartedAt:null,turnDeadlineAt:null,roundState:{...g.roundState,drawnThisTurn:false}};
+        return eliminateLocal(fail,caller.id,caller.id,{type:'failed',playerId:caller.id,points:0,auto:true});
+      });
+    },650);
+    return()=>clearTimeout(timer);
+  },[game.phase,game.dhappa?.mode,game.dhappa?.callerId,game.dhappa?.targetId,game.dhappa?.startedAt]);
 
   useEffect(()=>{if(game.phase==='roundSummary'||game.phase==='gameOver')setSelected([])},[game.phase,game.round]);
   useEffect(()=>{if(game.phase==='roundSummary')setMessage('ROUND COMPLETE');},[game.phase]);
@@ -992,12 +1074,12 @@ function SingleplayerGame({initialGame,onExit,ui}){
     {message&&<div className="toast">{message}</div>}
     <main className="tableStage"><div className="tableGlow"/><div className="tableSurface">
       <div className="tableCorners"/><div className="roundBadge">SINGLEPLAYER · {players.length-1} BOTS · TARGET SCORE {game.settings.targetScore}</div>
-      {seatPlayers.map((p,index)=>{const position=seatPosition(seatPlayers.length,index);const own=p.id==='human';const activeSeat=p.id===active?.id;const hand=p.hand||[];return <div key={p.id} className={`tableSeat seat-${position} ${activeSeat?'activeSeat':''} ${!p.alive?'isOut':''} ${own?'isYou':''}`} style={{'--seat-rotation':seatRotation(position),'--player-accent':p.color}}><div className="seatName"><span className="seatDot"/><b>{own?'YOU':p.name}</b>{activeSeat&&<em>TURN</em>}</div><div className="seatAvatar"><span/><span/></div><div className="seatHand">{hand.map((c,i)=>{const sel=own&&selected.includes(i);return <button key={`${p.id}-${i}-${c}`} className={`card tableCard ${/\d/.test(c)?'num':'op'} ${sel?'sel':''}`} disabled={!own||!isMyTurn||!!game.dhappa} onClick={()=>own&&setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])}>{c}</button>})}{!hand.length&&<span className="seatEmpty">EMPTY</span>}</div><div className="seatMeta">{p.alive?`${formatTime(displayRemaining(p))} · ${hand.length} CARDS`:'OUT · 0 PTS'}</div></div>})}
-      <section className="tableCenter"><div className="targetZone"><div className="targetLabel">ROUND TARGET</div><div className="targetCards">{game.roundState.targetCards.map((c,i)=><div className="targetPhysicalCard" key={i}><span>{c}</span></div>)}</div><div className="targetNumber">{game.roundState.target}</div></div><div className="centerTimer"><div className="turnLabel">{active?.id==='human'?'YOUR TURN':`${active?.name||'PLAYER'}'S TURN`}</div><div className="timerDigits">{formatTime(displayRemaining(active))}</div></div><div className="drawZone"><button className="drawPile numberPile" disabled={!isMyTurn||game.roundState.drawnThisTurn||!game.numberDeck.length} onClick={()=>localAction('draw',{deck:'number'})}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{game.numberDeck.length} LEFT</small></span></button><button className="drawPile operatorPile" disabled={!isMyTurn||game.roundState.drawnThisTurn||!game.operatorDeck.length} onClick={()=>localAction('draw',{deck:'operator'})}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{game.operatorDeck.length} LEFT</small></span></button></div><div className="drawHint">{game.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW EXACTLY ONE CARD'}</div></section>
-      <aside className="tableScoreboard"><div className="hudHead"><b>SCOREBOARD</b><span>LOCAL</span></div>{[...players].sort((a,b)=>(b.score??0)-(a.score??0)).map(p=><div className={`hudPlayer ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><span className="hudDot" style={{background:p.color}}/><div><b>{p.id==='human'?'YOU':p.name}</b><small>{p.alive?`+${p.roundScore||0} THIS ROUND`:'OUT'}</small></div><strong>{p.score||0}</strong></div>)}</aside>
+      {seatPlayers.map((p,index)=>{const position=seatPosition(seatPlayers.length,index);const own=p.id==='human';const activeSeat=p.id===active?.id;const hand=p.hand||[];return <div key={p.id} className={`tableSeat seat-${position} ${activeSeat?'activeSeat':''} ${!p.alive?'isOut':''} ${own?'isYou':''}`} style={{'--seat-rotation':seatRotation(position),'--player-accent':p.color}}><div className="seatName"><span className="seatDot"/><b>{own?'YOU':p.name}</b>{activeSeat&&<em>TURN</em>}</div><div className="seatAvatar"><span/><span/></div><div className="seatHand">{hand.map((c,i)=>{const sel=own&&selected.includes(i);return <button key={`${p.id}-${i}-${c}`} className={`card tableCard ${/\d/.test(c)?'num':'op'} ${sel?'sel':''}`} disabled={!own||!isMyTurn||!!game.dhappa} onClick={()=>own&&setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])}>{c}</button>})}{!hand.length&&<span className="seatEmpty">EMPTY</span>}</div><div className="seatMeta">{p.alive?`${formatTime(displayRemaining(p))} · ${hand.length}/${MAX_HAND_CARDS} CARDS`:'OUT · 0 PTS'}</div></div>})}
+      <section className="tableCenter"><div className="targetZone"><div className="targetLabel">ROUND TARGET</div><div className="targetCards">{game.roundState.targetCards.map((c,i)=><div className="targetPhysicalCard" key={i}><span>{c}</span></div>)}</div><div className="targetNumber">{game.roundState.target}</div></div><div className="centerTimer"><div className="turnLabel">{active?.id==='human'?'YOUR TURN':`${active?.name||'PLAYER'}'S TURN`}</div><div className="timerDigits">{formatTime(displayRemaining(active))}</div></div><div className="drawZone"><button className="drawPile numberPile" disabled={!isMyTurn||game.roundState.drawnThisTurn||myHand.length>=MAX_HAND_CARDS||!game.numberDeck.length} onClick={()=>localAction('draw',{deck:'number'})}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{game.numberDeck.length} LEFT</small></span></button><button className="drawPile operatorPile" disabled={!isMyTurn||game.roundState.drawnThisTurn||myHand.length>=MAX_HAND_CARDS||!game.operatorDeck.length} onClick={()=>localAction('draw',{deck:'operator'})}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{game.operatorDeck.length} LEFT</small></span></button></div><div className="drawHint">{myHand.length>=MAX_HAND_CARDS?'HAND LIMIT REACHED':game.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW EXACTLY ONE CARD'}</div></section>
+      <aside className="tableScoreboard"><div className="hudHead"><b>SCOREBOARD</b><span>LOCAL</span></div>{[...players].sort((a,b)=>(b.score??0)-(a.score??0)||(b.roundScore??0)-(a.roundScore??0)).map(p=>{const lastAward=[...(game.roundState?.events||[])].reverse().find(e=>Number(e?.points)>0 && (e?.type==='win'||e?.type==='kick'));return <div className={`hudPlayer ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><span className="hudDot" style={{background:p.color}}/><div><b>{p.id==='human'?'YOU':p.name}</b><small>{p.alive?`+${p.roundScore||0} THIS ROUND`:'OUT'}</small></div><strong>{p.score||0}</strong>{lastAward?.playerId===p.id&&<em className="awardPill">+{lastAward.points}</em>}</div>})}</aside>
       <div className="myDock"><div className="myExpression"><div className="exprPreview">{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</div>{safeSelected.length>0&&<div className={`exprValue ${liveValue===null?'bad':''}`}>{liveValue===null?'INVALID':`= ${liveValue}`}</div>}</div><div className="dockButtons"><button className="dockBtn" disabled={!safeSelected.length} onClick={()=>setSelected(v=>v.slice(0,-1))}>UNDO</button><button className="dockBtn" disabled={!safeSelected.length} onClick={()=>setSelected([])}>CLEAR</button><button className="dockBtn passBtn" disabled={!isMyTurn||!game.roundState.drawnThisTurn} onClick={()=>{setSelected([]);localAction('pass')}}>PASS</button><button className="dockBtn attemptBtn" disabled={!isMyTurn||!game.roundState.drawnThisTurn||!safeSelected.length} onClick={()=>{setChallengeSelected([]);localAction('attempt')}}>ATTEMPT</button><button className="dockBtn dhappaBtn" disabled={!isMyTurn||players.filter(p=>p.alive&&p.id!=='human').length===0} onClick={()=>setTargetPick(players.filter(p=>p.alive&&p.id!=='human').map(p=>p.id))}>DHAPPA</button></div>{targetPick.length>0&&<div className="tableChooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!=='human').map(p=><button key={p.id} onClick={()=>{setTargetPick([]);localAction('dhappa',{targetId:p.id})}}><span style={{background:p.color}}/>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}</div>
     </div></main>
-    {game.dhappa&&<ChallengeErrorBoundary onClose={()=>localAction('cancelChallenge')}><ChallengeModal state={game} now={localNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={i=>setChallengeSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])} onUndo={()=>setChallengeSelected(v=>v.slice(0,-1))} onClear={()=>setChallengeSelected([])} onSubmit={()=>localAction('submitExpression',{indices:challengeSelected})} onCancel={(reason)=>localAction(reason==='fail'?'failChallenge':'cancelChallenge')} /></ChallengeErrorBoundary>}
+    {game.dhappa&&game.dhappa.callerId==='human'&&<ChallengeErrorBoundary onClose={()=>localAction('cancelChallenge')}><ChallengeModal state={game} now={localNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={i=>setChallengeSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])} onUndo={()=>setChallengeSelected(v=>v.slice(0,-1))} onClear={()=>setChallengeSelected([])} onSubmit={()=>localAction('submitExpression',{indices:challengeSelected})} onCancel={(reason)=>localAction(reason==='fail'?'failChallenge':'cancelChallenge')} /></ChallengeErrorBoundary>}
   </div>;
 }
 

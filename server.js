@@ -14,6 +14,7 @@ const rooms = new Map();
 const COLORS = ['#ff5c5c','#ffd447','#61d98a','#55a5ff','#bd7cff','#ff9f43'];
 const I_WON_POINTS = [5,3,2,1,1];
 const MAX_PLAYERS = 6;
+const MAX_HAND_CARDS = 15;
 const MIN_PLAYERS = 2;
 
 function shuffle(a){

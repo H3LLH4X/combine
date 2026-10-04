@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
 const MAX_PLAYERS = 6;
+const MAX_HAND_CARDS = 15;
 const MIN_PLAYERS = 2;
 const COLORS = ['#ff5c5c','#ffd447','#61d98a','#55a5ff','#bd7cff','#ff9f43'];
 const I_WON_POINTS = [5,3,2,1,1];
@@ -501,6 +502,7 @@ export class CombineRoom extends DurableObject {
       if (actor.id !== active.id) return this.socketError(ws,'It is not your turn.');
       if (this.room.roundState.drawnThisTurn) return this.socketError(ws,'You can draw only one card per turn.');
       const deck = msg.deck === 'operator' ? this.room.operatorDeck : this.room.numberDeck;
+      if (actor.hand.length >= MAX_HAND_CARDS) return this.socketError(ws,`Hand limit reached: maximum ${MAX_HAND_CARDS} cards.`);
       if (!deck.length) return this.socketError(ws,'That deck is empty.');
       const card = deck.shift();
       actor.hand.push(card);
