@@ -633,7 +633,25 @@ export class CombineRoom extends DurableObject {
       if (parts[1] === 'create') return this.initialize(body.name, body.settings, body.code);
       if (parts[1] === 'join') {
         if (!this.room) return json({error:'Room not found.'},404);
-        if (this.room.phase !== 'lobby') return json({error:'That game has already started.'},409);
+
+        // A browser may retry JOIN for a room it already belongs to (for
+        // example after closing/reopening the tab). Treat that as a rejoin
+        // even when the game has already started. New players still cannot
+        // enter a room once it has left the lobby.
+        if (body.playerId) {
+          const existing=this.player(body.playerId);
+          if (existing) {
+            this.broadcast();
+            return json({ok:true,rejoined:true,playerId:existing.id,state:this.serialize(existing.id)});
+          }
+        }
+
+        if (this.room.phase !== 'lobby') {
+          return json({
+            error:'That game has already started. New players cannot join now. If you were already in this room, use RESUME ROOM or join again from the same browser.',
+            code:'ROOM_ALREADY_STARTED'
+          },409);
+        }
         try {
           const p=this.addPlayer(body.name,false);
           await this.save();
@@ -721,7 +739,7 @@ export default {
       const id=env.COMBINE_ROOM.idFromName(code);
       const stub=env.COMBINE_ROOM.get(id);
       const path=url.pathname==='/api/join'?'/internal/join':'/internal/rejoin';
-      const payload=url.pathname==='/api/join'?{name:body.name}:{playerId:body.playerId};
+      const payload=url.pathname==='/api/join'?{name:body.name,playerId:body.playerId}:{playerId:body.playerId};
       const result=await stub.fetch(`https://room.internal${path}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
       const text=await result.text();
       return new Response(text,{status:result.status,headers:{'content-type':'application/json',...CORS}});

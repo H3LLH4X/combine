@@ -447,7 +447,20 @@ function CombineApp(){
   },[view,session?.roomCode,session?.playerId]);
 
   async function createRoom(){await send({type:'createRoom',name,settings});}
-  async function joinRoom(){await send({type:'joinRoom',code:roomCode.trim().toUpperCase(),name});}
+  async function joinRoom(){
+    const code=roomCode.trim().toUpperCase();
+    if(!code) return;
+
+    // If this browser already belongs to this room, reconnect the existing
+    // player session instead of trying to add a brand-new player. This allows
+    // a player to close/reopen the browser after the game has started.
+    if(session?.roomCode===code && session?.playerId){
+      await send({type:'rejoinRoom',code,playerId:session.playerId});
+      return;
+    }
+
+    await send({type:'joinRoom',code,name});
+  }
   async function startGame(){await send({type:'startGame'});}
   function act(type,payload={}){send({type,...payload})}
   function toggleSelected(i){setSelected(s=>{const cur=Array.isArray(s)?s:[];return cur.includes(i)?cur.filter(x=>x!==i):[...cur,i]})}
@@ -522,7 +535,7 @@ function CombineApp(){
 }
 
 async function connectResume(send,session){if(session?.roomCode&&session?.playerId){await send({type:'rejoinRoom',code:session.roomCode,playerId:session.playerId});}}
-function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connected,hasSession,savedRoom,onSettings}){return <div className="menu"><div className="menuPanel"><div className="logo">COMBINE</div><div className="tag">MATH · CARDS · CHAOS</div><div className="conn">● {connected?'SERVER CONNECTED':'READY TO CONNECT'}</div><label>YOUR NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)}/></label><button className="primary" onClick={onCreate}>HOST GAME</button>{hasSession&&<button className="secondary resumeBtn" onClick={onResume}>RESUME ROOM · {savedRoom}</button>}<div className="joinRow"><input placeholder="ROOM CODE" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())}/><button onClick={onJoin}>JOIN</button></div><button className="secondary" onClick={onSettings}>SETTINGS</button><div className="menuHelp">Host creates a room. Everyone joins with the same six-character code.</div></div></div>}
+function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connected,hasSession,savedRoom,onSettings}){return <div className="menu"><div className="menuPanel"><div className="logo">COMBINE</div><div className="tag">MATH · CARDS · CHAOS</div><div className="conn">● {connected?'SERVER CONNECTED':'READY TO CONNECT'}</div><label>YOUR NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)}/></label><button className="primary" onClick={onCreate}>HOST GAME</button>{hasSession&&<button className="secondary resumeBtn" onClick={onResume}>RESUME ROOM · {savedRoom}</button>}<div className="joinRow"><input placeholder="ROOM CODE" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())}/><button onClick={onJoin}>JOIN</button></div><button className="secondary" onClick={onSettings}>SETTINGS</button><div className="menuHelp">Host creates a room. New players can join only before the game starts. Players who already belong to this room can reconnect after the game has started.</div></div></div>}
 function Lobby({state,me,onStart,onLeave}){
   const [qr,setQr]=useState('');
   const [copied,setCopied]=useState(false);
