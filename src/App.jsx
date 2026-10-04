@@ -222,6 +222,26 @@ function normalizeState(raw){
   };
 }
 
+
+function seatPosition(count,index){
+  const patterns={
+    2:['bottom','top'],
+    3:['bottom','upperLeft','upperRight'],
+    4:['bottom','left','top','right'],
+    5:['bottom','lowerLeft','upperLeft','upperRight','lowerRight'],
+    6:['bottom','lowerLeft','upperLeft','top','upperRight','lowerRight'],
+  };
+  const row=patterns[Math.max(2,Math.min(6,count))] || patterns[4];
+  return row[index] || 'top';
+}
+
+function seatRotation(position){
+  if(position==='top') return '180deg';
+  if(position==='left'||position==='upperLeft'||position==='lowerLeft') return '90deg';
+  if(position==='right'||position==='upperRight'||position==='lowerRight') return '-90deg';
+  return '0deg';
+}
+
 function useGameSocket(){
   const wsRef=useRef(null);
   const connectPromiseRef=useRef(null);
@@ -490,49 +510,119 @@ function CombineApp(){
     act('leaveRoom');
   }
 
-  return <div className={`app ${ui.animations?'':'no-anim'}`} style={getShellStyle(ui)}>
-    <header className="topbar"><div className="brand">COMBINE <span>ONLINE</span></div><div className="roomtag">ROOM <b>{state?.code}</b></div><div className="topBtns"><button onClick={()=>setShowSettings(true)}>⚙ SETTINGS</button><button className="leaveTop" onClick={()=>{if(window.confirm('Leave this room?')) leaveRoom()}}>LEAVE ROOM</button></div></header>
+  const seatPlayers = [
+    ...(me ? [me] : []),
+    ...players.filter(p=>p.id!==me?.id),
+  ].slice(0,6);
+
+  return <div className={`app tabletopApp ${ui.animations?'':'no-anim'}`} style={getShellStyle(ui)}>
+    <header className="topbar tableTopbar">
+      <div className="brand">COMBINE <span>ONLINE</span></div>
+      <div className="tableTopCenter">ROOM <b>{state?.code}</b><span>ROUND {state.round}</span></div>
+      <div className="topBtns"><button onClick={()=>setShowSettings(true)}>⚙</button><button className="leaveTop" onClick={()=>{if(window.confirm('Leave this room?')) leaveRoom()}}>LEAVE</button></div>
+    </header>
+
     {messages.length>0&&<div className="toast">{messages[0]}</div>}
-    <main className="game">
-      <section className="board">
-        <div className="roundInfo">ROUND {state.round} · GLOBAL TARGET <b>{state.settings.targetScore}</b></div>
-        <div className="targetCard"><span>ROUND TARGET</span><strong>{roundState.target}</strong><small>{Array.isArray(roundState.targetCards)?roundState.targetCards.join(' + '):''}</small></div>
-        <div className="activeLine"><div className="activeName" style={{color:active?.color}}>{active?.name?.toUpperCase()}'S TURN</div><div className="bigTimer">{formatTime(displayRemaining(active))}</div></div>
-        <div className="decks">
-          <button className="deck number" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}><span>NUMBER</span><b>DRAW</b><small>{roundState.numberCardsLeft} LEFT</small></button>
-          <button className="deck operator" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}><span>OPERATOR</span><b>DRAW</b><small>{roundState.operatorCardsLeft} LEFT</small></button>
-        </div>
-        <div className="handWrap">
-          <div className="sectionHead"><span>{me?.name?.toUpperCase()}'S PUBLIC HAND</span><span>{me?.hand?.length||0} CARDS · {roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE'}</span></div>
-          <div className="hand">{myHand.map((c,i)=><button key={i} disabled={!isMyTurn||!!state.dhappa} onClick={()=>toggleSelected(i)} className={`card ${/\d/.test(c)?'num':'op'} ${selected.includes(i)?'sel':''}`}>{c}</button>)}{!me?.hand?.length&&<div className="empty">No cards yet.</div>}</div>
-          <div className="expression"><span>{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</span><div className="exprActions"><button className="smallBtn" disabled={!safeSelected.length} onClick={undoSelected}>UNDO</button><button className="smallBtn" disabled={!safeSelected.length} onClick={clearSelected}>CLEAR</button><button disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa||!safeSelected.length} onClick={()=>{setExpressionError('');act('attempt')}}>ATTEMPT</button></div></div>
-          {safeSelected.length>0&&<div className={`liveResult ${liveValue===null?'bad':''}`}>
-            {liveValue===null ? 'INVALID EXPRESSION' : `= ${liveValue}`}
-          </div>}
-          {expressionError&&<div className="err">{expressionError}</div>}
-        </div>
-        <div className="publicTable">
-          <div className="sectionHead"><span>ALL PUBLIC HANDS</span><span>EVERY PLAYER CAN SEE EVERY CARD</span></div>
-          <div className="publicHands">
-            {players.map(p=><div className={`publicPlayer ${p.id===active?.id?'isActive':''} ${!p.alive?'isOut':''}`} key={p.id}>
-              <div className="publicPlayerHead"><span><i style={{background:p.color}}></i><b>{p.name}</b>{p.id===active?.id?' · PLAYING':''}</span><em>{p.hand.length} CARDS</em></div>
-              <div className="publicCards">{p.hand.length?p.hand.map((c,i)=><span key={i} className={`miniCard ${/\d/.test(c)?'num':'op'}`}>{c}</span>):<span className="noCards">EMPTY</span>}</div>
-            </div>)}
+
+    <main className="tableStage">
+      <div className="tableGlow" aria-hidden="true"/>
+      <div className="tableSurface">
+        <div className="tableCorners" aria-hidden="true"><span/><span/><span/><span/></div>
+
+        <div className="roundBadge">ROUND {state.round}<span>·</span> TARGET SCORE {state.settings.targetScore}</div>
+
+        {seatPlayers.map((p,index)=>{
+          const position=seatPosition(seatPlayers.length,index);
+          const own=p.id===me?.id;
+          const isActive=p.id===active?.id;
+          const hand=Array.isArray(p.hand)?p.hand:[];
+          return <div
+            key={p.id}
+            className={`tableSeat seat-${position} ${isActive?'activeSeat':''} ${!p.alive?'isOut':''} ${own?'isYou':''}`}
+            style={{'--seat-rotation':seatRotation(position),'--player-accent':p.color||'var(--cyan)'}}
+          >
+            <div className="seatName">
+              <span className="seatDot"/>
+              <b>{own?'YOU':p.name}</b>
+              {isActive&&<em>TURN</em>}
+            </div>
+            <div className="seatAvatar" aria-hidden="true"><span/><span/></div>
+            <div className="seatHand">
+              {hand.map((c,i)=>{
+                const isSelected=own && selected.includes(i);
+                return <button
+                  key={`${p.id}-${i}-${c}`}
+                  className={`card tableCard ${/\d/.test(c)?'num':'op'} ${isSelected?'sel':''}`}
+                  disabled={!own || !isMyTurn || !!state.dhappa}
+                  onClick={()=>own && toggleSelected(i)}
+                >{c}</button>;
+              })}
+              {!hand.length&&<span className="seatEmpty">EMPTY</span>}
+            </div>
+            <div className="seatMeta">{p.alive?`${formatTime(displayRemaining(p))} · ${hand.length} CARDS`:'OUT · 0 PTS'}</div>
+          </div>;
+        })}
+
+        <section className="tableCenter">
+          <div className="targetZone">
+            <div className="targetLabel">ROUND TARGET</div>
+            <div className="targetCards">
+              {(Array.isArray(roundState.targetCards)&&roundState.targetCards.length?roundState.targetCards:[String(roundState.target||'—')]).map((c,i)=><div className="targetPhysicalCard" key={i}><span>{c}</span></div>)}
+            </div>
+            <div className="targetNumber">{roundState.target||'—'}</div>
           </div>
+
+          <div className="centerTimer">
+            <div className="turnLabel" style={{color:active?.color||'var(--cyan)'}}>{active?.id===me?.id?'YOUR TURN':`${active?.name||'PLAYER'}'S TURN`}</div>
+            <div className="timerDigits">{formatTime(displayRemaining(active))}</div>
+          </div>
+
+          <div className="drawZone">
+            <button className="drawPile numberPile" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}>
+              <span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{roundState.numberCardsLeft} LEFT</small></span>
+            </button>
+            <button className="drawPile operatorPile" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}>
+              <span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{roundState.operatorCardsLeft} LEFT</small></span>
+            </button>
+          </div>
+          <div className="drawHint">{roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW EXACTLY ONE CARD'}</div>
+        </section>
+
+        <aside className="tableScoreboard">
+          <div className="hudHead"><b>SCOREBOARD</b><span>ROOM {state.code}</span></div>
+          {sorted.map(p=><div className={`hudPlayer ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}>
+            <span className="hudDot" style={{background:p.color}}/>
+            <div><b>{p.id===me?.id?'YOU':p.name}</b><small>{p.alive?`+${p.roundScore||0} THIS ROUND`:'OUT'}</small></div>
+            <strong>{p.score||0}</strong>
+          </div>)}
+        </aside>
+
+        <div className="eventStrip">
+          {(Array.isArray(roundState.events)?roundState.events:[]).slice(-3).reverse().map((e,i)=><span key={i}><b>{players.find(p=>p.id===e?.playerId)?.name||'PLAYER'}</b> {String(e?.type||'EVENT').toUpperCase()} <em>{Number(e?.points)>0?`+${e.points}`:'0'}</em></span>)}
         </div>
-        <div className="controls">
-          <button className="pass" disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setSelected([]);act('pass')}}>PASS</button>
-          <button className="attempt" disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setChallengeSelected([]);setExpressionError('');act('attempt')}}>ATTEMPT</button>
-          <button className="dhappa" disabled={!isMyTurn||players.filter(p=>p.alive&&p.id!==me?.id).length===0||!!state.dhappa} onClick={()=>{setTargetPick(players.filter(p=>p.alive&&p.id!==me?.id).map(p=>p.id));setSelected([]);setExpressionError('')}}>DHAPPA</button>
+
+        <div className="myDock">
+          <div className="myExpression">
+            <div className="exprPreview">{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</div>
+            {safeSelected.length>0&&<div className={`exprValue ${liveValue===null?'bad':''}`}>{liveValue===null?'INVALID':`= ${liveValue}`}</div>}
+          </div>
+          <div className="dockButtons">
+            <button className="dockBtn" disabled={!safeSelected.length} onClick={undoSelected}>UNDO</button>
+            <button className="dockBtn" disabled={!safeSelected.length} onClick={clearSelected}>CLEAR</button>
+            <button className="dockBtn passBtn" disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setSelected([]);act('pass')}}>PASS</button>
+            <button className="dockBtn attemptBtn" disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa||!safeSelected.length} onClick={()=>{setChallengeSelected([]);setExpressionError('');act('attempt')}}>ATTEMPT</button>
+            <button className="dockBtn dhappaBtn" disabled={!isMyTurn||players.filter(p=>p.alive&&p.id!==me?.id).length===0||!!state.dhappa} onClick={()=>{setTargetPick(players.filter(p=>p.alive&&p.id!==me?.id).map(p=>p.id));setSelected([]);setExpressionError('')}}>DHAPPA</button>
+          </div>
+          {expressionError&&<div className="dockError">{expressionError}</div>}
+          {targetPick.length>0&&<div className="tableChooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!==me?.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}/>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
         </div>
-        {targetPick.length>0&&<div className="chooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!==me?.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}></span>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
-      </section>
-      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(Array.isArray(roundState.events)?roundState.events:[]).slice(-8).reverse().map((e,i)=>{const eventType=String(e?.type??'EVENT');const points=Number(e?.points)||0;return <div key={i}><b>{players.find(p=>p.id===e?.playerId)?.name||'Player'}</b><span>{eventType==='win'?'WON':eventType==='kick'?'KICKED':eventType.toUpperCase()}</span><em>{points>0?`+${points}`:'0'}</em></div>})}</div></aside>
+      </div>
     </main>
 
     {state.dhappa&&<ChallengeErrorBoundary onClose={()=>act('cancelChallenge')}><ChallengeModal key={`${state.dhappa.startedAt||'dhappa'}-${state.dhappa.mode||'mode'}`} state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:(Array.isArray(challengeSelected)?challengeSelected:[]).map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} /></ChallengeErrorBoundary>}
     {showSettings&&<Settings settings={state?.settings||settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={false} onClose={()=>setShowSettings(false)} onLeave={()=>{if(window.confirm('Leave this room?')) leaveRoom()}} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
   </div>
+
 }
 
 async function connectResume(send,session){if(session?.roomCode&&session?.playerId){await send({type:'rejoinRoom',code:session.roomCode,playerId:session.playerId});}}
