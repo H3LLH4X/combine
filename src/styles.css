@@ -125,3 +125,24 @@ input:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(68,2
 @media(max-width:760px){.tableStage{padding:0}.tableSurface{height:calc(100dvh - 58px);min-height:620px;border-radius:0;border-left:0;border-right:0}.tableSurface:before{inset:9px;border-radius:16px}.tableTopbar .brand{font-size:14px}.tableTopCenter{font-size:7px}.tableTopCenter span{display:none}.tableScoreboard{top:54px;right:10px;width:145px;padding:7px}.hudPlayer{padding:5px}.eventStrip{top:54px;left:10px;max-width:160px}.roundBadge{top:12px;font-size:6px}.seat-bottom{bottom:112px;width:72%}.seat-top{top:28px;width:67%}.seat-left{left:-24px;width:245px}.seat-right{right:-24px;width:245px}.seat-upperLeft,.seat-lowerLeft{left:-22px;width:220px}.seat-upperRight,.seat-lowerRight{right:-22px;width:220px}.tableCard{width:41px;height:57px;font-size:21px}.seatMeta{font-size:6px}.seatName b{font-size:9px}.seatName{font-size:7px}.seatAvatar{width:25px;height:23px}.tableCenter{width:220px;top:48%}.targetPhysicalCard{width:42px;height:55px;font-size:20px}.targetNumber{font-size:10px}.timerDigits{font-size:22px}.drawPile{width:75px;height:95px}.drawPile .pileBack{width:67px;height:84px}.drawHint{font-size:6px}.myDock{width:min(92vw,560px);bottom:7px;padding:7px;border-radius:11px}.dockButtons{grid-template-columns:repeat(5,1fr)}.dockBtn{padding:8px 3px;font-size:6px}.exprPreview{font-size:9px}}
 @media(max-width:560px){.tableScoreboard{width:132px}.hudPlayer small{display:none}.hudPlayer strong{font-size:11px}.eventStrip{max-width:132px}.eventStrip span{font-size:5px}.seat-left,.seat-right{display:none}.seat-upperLeft,.seat-lowerLeft,.seat-upperRight,.seat-lowerRight{width:190px}.seat-bottom{width:84%}.seat-top{width:80%}.tableCenter{top:44%}.myDock{bottom:5px}.topBtns button{font-size:7px}.tableTopbar{padding:0 9px}}
 @media(max-width:430px){.tableScoreboard{display:none}.eventStrip{display:none}.seat-upperLeft,.seat-lowerLeft,.seat-upperRight,.seat-lowerRight{width:175px}.seat-bottom{bottom:118px;width:92%}.seat-top{top:32px;width:86%}.tableCenter{top:43%}.drawZone{gap:9px}.drawPile{width:68px;height:86px}.drawPile .pileBack{width:60px;height:76px}.drawPile .pileFace b{font-size:8px}.tableCard{width:37px;height:52px;font-size:19px}.myDock{width:96vw}.dockBtn{font-size:5px}}
+
+/* Singleplayer + Practice mode */
+.modeGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+.modeBtn{min-height:68px;border:1px solid rgba(68,247,255,.24);border-radius:11px;background:linear-gradient(145deg,rgba(21,12,49,.86),rgba(10,5,28,.92));color:#fff;cursor:pointer;padding:12px;display:grid;gap:5px;text-align:left;box-shadow:inset 0 0 16px rgba(68,247,255,.03)}
+.modeBtn:hover{border-color:rgba(68,247,255,.65);transform:translateY(-1px);box-shadow:0 0 22px rgba(68,247,255,.12)}
+.modeBtn b{font-size:12px;letter-spacing:1.5px;color:var(--cyan)}
+.modeBtn small{font-size:8px;letter-spacing:1.5px;color:#786d99}
+.practiceModeBtn{border-color:rgba(255,79,216,.28)}
+.practiceModeBtn b{color:var(--pink)}
+.modeSetup{width:min(94vw,520px);background:linear-gradient(145deg,rgba(19,11,40,.96),rgba(8,4,23,.96));border:1px solid rgba(255,79,216,.36);border-radius:20px;padding:26px;box-shadow:0 35px 100px rgba(0,0,0,.72),0 0 55px rgba(68,247,255,.08);backdrop-filter:blur(14px)}
+.modeSetupHero{padding:14px 0 4px;color:#9e94be;line-height:1.6;font-size:12px}
+.modeSetup label{display:block;color:#8d81ad;font-size:10px;letter-spacing:2px;margin:14px 0}
+.modeSetup input{width:100%;padding:12px;background:rgba(4,2,15,.72);border:1px solid rgba(151,112,255,.25);border-radius:9px;color:#fff;outline:none;margin-top:7px}
+.modeSetup input[type=range]{padding:0;accent-color:#ff4fd8}
+.setupValue{text-align:center;color:var(--cyan);font-size:12px;letter-spacing:1px;padding-top:8px}
+.practiceMessage{max-width:350px;color:#ddd7ff;font-size:13px;line-height:1.5;text-align:center}
+.practiceStatus{gap:6px}
+.practiceStage .myDock{bottom:18px}
+.practiceRules{position:absolute;bottom:108px;left:50%;transform:translateX(-50%);color:#766b95;font-size:9px;letter-spacing:1px;text-align:center;max-width:620px;padding:0 12px}
+.practiceCenter{top:45%}
+@media(max-width:600px){.modeGrid{grid-template-columns:1fr}.modeBtn{min-height:60px}.modeSetup{padding:20px}.practiceRules{bottom:118px;font-size:7px}.practiceMessage{font-size:10px;max-width:250px}}

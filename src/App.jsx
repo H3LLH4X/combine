@@ -223,6 +223,145 @@ function normalizeState(raw){
 }
 
 
+
+const LOCAL_COLORS = ['#ff4fd8','#44f7ff','#ffd447','#72ffb6','#ff6b7a','#a778ff'];
+
+function localId(prefix='p'){
+  try { if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`; } catch {}
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+}
+
+function makeLocalNumberDeck(){
+  return shuffle(Array.from({length:10},(_,n)=>String(n)).flatMap(n=>Array(4).fill(n)));
+}
+function makeLocalOperatorDeck(){
+  return shuffle(['+','-','*','/'].flatMap(op=>Array(4).fill(op)));
+}
+function makeLocalTarget(){
+  const a=String(1+Math.floor(Math.random()*9));
+  const b=String(Math.floor(Math.random()*10));
+  return {target:Number(`${a}${b}`),targetCards:[a,b]};
+}
+function targetCardsFromNumber(target){
+  const digits=String(Math.max(0,Math.floor(Number(target)||0))).split('');
+  return digits.length ? digits : ['0'];
+}
+
+function findBotExpression(hand,target){
+  const cards=Array.isArray(hand)?hand:[];
+  const n=Math.min(cards.length,6);
+  if(n<3) return null;
+  const indices=Array.from({length:n},(_,i)=>i);
+  const used=new Array(n).fill(false);
+  let found=null;
+
+  function dfs(seq){
+    if(found) return;
+    if(seq.length>=3){
+      const value=evalLocal(seq.map(i=>cards[i]));
+      if(value!==null && Math.abs(value-Number(target))<1e-9){ found=seq.slice(); return; }
+    }
+    if(seq.length>=n) return;
+    for(const i of indices){
+      if(used[i]) continue;
+      used[i]=true;
+      seq.push(i);
+      dfs(seq);
+      seq.pop();
+      used[i]=false;
+      if(found) return;
+    }
+  }
+  dfs([]);
+  return found;
+}
+
+function advanceLocalTurn(game, actorId){
+  const alive=game.players.filter(p=>p.alive);
+  if(alive.length<=1) return game;
+  const pos=alive.findIndex(p=>p.id===actorId);
+  const step=game.settings.direction==='clockwise'?1:-1;
+  const next=alive[(Math.max(0,pos)+step+alive.length)%alive.length];
+  const now=Date.now();
+  return {
+    ...game,
+    roundState:{...game.roundState,activeId:next.id,drawnThisTurn:false},
+    turnStartedAt:now,
+    turnDeadlineAt:now+(next.id==='human'?game.settings.playerSeconds*1000:Math.min(game.settings.playerSeconds,8)*1000),
+  };
+}
+
+function finishLocalRound(game){
+  const scored=game.players.map(p=>({...p,score:(p.score||0)+(p.roundScore||0)}));
+  const history={
+    round:game.round,
+    target:game.roundState.target,
+    scores:scored.map(p=>({id:p.id,roundScore:p.roundScore,total:p.score}))
+  };
+  const winner=scored.find(p=>p.score>=game.settings.targetScore);
+  return {
+    ...game,
+    players:scored,
+    phase:winner?'gameOver':'roundSummary',
+    winnerId:winner?.id||null,
+    roundHistory:[...(game.roundHistory||[]),history],
+    turnStartedAt:null,
+    turnDeadlineAt:null,
+    dhappa:null,
+  };
+}
+
+function eliminateLocal(game,targetId,advanceFromId,event={}){
+  const target=game.players.find(p=>p.id===targetId);
+  if(!target) return game;
+  const players=game.players.map(p=>p.id===targetId?{...p,alive:false,remainingTime:0}:p);
+  const nextGame={...game,players,roundState:{...game.roundState,events:[...(game.roundState?.events||[]),{...event,ts:Date.now()}]}};
+  const survivors=players.filter(p=>p.alive);
+  if(survivors.length===1) return finishLocalRound(nextGame);
+  return advanceLocalTurn(nextGame,advanceFromId);
+}
+
+function beginLocalRound(game,roundNumber,targetOverride=null){
+  const numberDeck=makeLocalNumberDeck();
+  const operatorDeck=makeLocalOperatorDeck();
+  const generated=targetOverride!=null ? {target:Number(targetOverride),targetCards:targetCardsFromNumber(targetOverride)} : makeLocalTarget();
+  const players=game.players.map(p=>({...p,alive:true,roundScore:0,hand:[],remainingTime:game.settings.playerSeconds}));
+  const starter=players[Math.floor(Math.random()*players.length)];
+  const now=Date.now();
+  return {
+    ...game,
+    phase:'turn',
+    round:roundNumber,
+    players,
+    numberDeck:numberDeck.slice(2),
+    operatorDeck,
+    roundState:{target:generated.target,targetCards:generated.targetCards,activeId:starter.id,drawnThisTurn:false,finishCount:0,events:[]},
+    turnStartedAt:now,
+    turnDeadlineAt:now+(starter.id==='human'?game.settings.playerSeconds*1000:Math.min(game.settings.playerSeconds,8)*1000),
+    dhappa:null,
+    winnerId:null,
+  };
+}
+
+function makeSingleplayerGame(botCount=3,targetScore=11,playerSeconds=120,playerName='YOU'){
+  const players=[{id:'human',name:String(playerName||'YOU').slice(0,20),color:LOCAL_COLORS[0],score:0,roundScore:0,alive:true,hand:[],remainingTime:playerSeconds,online:true}];
+  for(let i=0;i<botCount;i++) players.push({id:`bot-${i+1}`,name:`BOT ${String(i+1).padStart(2,'0')}`,color:LOCAL_COLORS[i+1]||LOCAL_COLORS[1],score:0,roundScore:0,alive:true,hand:[],remainingTime:playerSeconds,online:true,bot:true});
+  const base={mode:'singleplayer',phase:'lobby',hostPlayerId:'human',me:'human',players,round:0,settings:{targetScore:Math.max(1,targetScore),playerSeconds:Math.max(5,playerSeconds),dhappaSeconds:30,direction:'counterclockwise'},roundState:null,roundHistory:[],numberDeck:[],operatorDeck:[],dhappa:null,winnerId:null,turnStartedAt:null,turnDeadlineAt:null};
+  return beginLocalRound(base,1,null);
+}
+
+function makePracticeGame(target=24,playerName='YOU'){
+  const safeTarget=Math.max(1,Math.min(9999,Math.floor(Number(target)||24)));
+  const now=Date.now();
+  return {
+    mode:'practice',phase:'practice',round:1,hostPlayerId:'human',me:'human',settings:{targetScore:1,playerSeconds:0,dhappaSeconds:30,direction:'counterclockwise'},
+    players:[{id:'human',name:String(playerName||'YOU').slice(0,20),color:LOCAL_COLORS[0],score:0,roundScore:0,alive:true,hand:[],remainingTime:0,online:true}],
+    roundState:{target:safeTarget,targetCards:targetCardsFromNumber(safeTarget),activeId:'human',drawnThisTurn:false,finishCount:0,events:[]},
+    roundHistory:[],numberDeck:makeLocalNumberDeck(),operatorDeck:makeLocalOperatorDeck(),dhappa:null,winnerId:null,turnStartedAt:null,turnDeadlineAt:null,
+    practiceSolved:false,createdAt:now
+  };
+}
+
 function seatPosition(count,index){
   const patterns={
     2:['bottom','top'],
@@ -395,6 +534,8 @@ function CombineApp(){
   const [targetPick,setTargetPick]=useState([]); const [selected,setSelected]=useState([]); const [challengeSelected,setChallengeSelected]=useState([]);
   const [showSettings,setShowSettings]=useState(false);
   const [ui,setUi]=useState(loadUiSettings);
+  const [localMode,setLocalMode]=useState(null);
+  const [showModeSetup,setShowModeSetup]=useState(null);
   useEffect(()=>persistUiSettings({...ui,name}),[ui,name]);
   const updateUi=(patch)=>setUi(v=>({...v,...patch}));
   const [expressionError,setExpressionError]=useState('');
@@ -490,12 +631,17 @@ function CombineApp(){
   function clearSelected(){setSelected([]);setExpressionError('')}
   function undoChallenge(){setChallengeSelected(s=>s.slice(0,-1));setExpressionError('')}
   function clearChallenge(){setChallengeSelected([]);setExpressionError('')}
+  if(localMode?.type==='singleplayer') return <SingleplayerGame initialGame={localMode.game} onExit={()=>setLocalMode(null)} ui={ui}/>;
+  if(localMode?.type==='practice') return <PracticeGame initialTarget={localMode.target} playerName={localMode.playerName} onExit={()=>setLocalMode(null)} ui={ui}/>;
+
   // After leaving, the socket clears state asynchronously. Never render a room
   // view with null state during that transition; go straight back to the menu.
   if(view==='menu' || !state) return <div className="menuShell" style={getShellStyle(ui)}>
     <MatrixRain enabled={ui.matrixBackground && ui.backgroundMode !== 'custom'} />
     {messages.length>0&&<div className="toast menuToast">{messages[0]}</div>}
-    <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} settings={settings} setSettings={setSettings} onSettings={()=>setShowSettings(true)} />
+    <Menu name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} onCreate={createRoom} onJoin={joinRoom} onResume={()=>{connectResume(send,session)}} connected={connected} hasSession={!!session} savedRoom={session?.roomCode} onSingleplayer={()=>setShowModeSetup('singleplayer')} onPractice={()=>setShowModeSetup('practice')} onSettings={()=>setShowSettings(true)} />
+    {showModeSetup==='singleplayer'&&<ModeSetup type="singleplayer" onClose={()=>setShowModeSetup(null)} onStart={({bots,targetScore,playerSeconds})=>{setShowModeSetup(null);setLocalMode({type:'singleplayer',game:makeSingleplayerGame(bots,targetScore,playerSeconds,name)})}}/>}
+    {showModeSetup==='practice'&&<ModeSetup type="practice" onClose={()=>setShowModeSetup(null)} onStart={({target})=>{setShowModeSetup(null);setLocalMode({type:'practice',target,playerName:name})}}/>}
     {showSettings&&<Settings settings={settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={!state} onClose={()=>setShowSettings(false)} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
   </div>;
   if(view==='lobby') return <Lobby state={state} me={me} onStart={startGame} onLeave={()=>act('leaveRoom')} />;
@@ -626,7 +772,227 @@ function CombineApp(){
 }
 
 async function connectResume(send,session){if(session?.roomCode&&session?.playerId){await send({type:'rejoinRoom',code:session.roomCode,playerId:session.playerId});}}
-function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connected,hasSession,savedRoom,onSettings}){return <div className="menu"><div className="menuPanel"><div className="logo">COMBINE</div><div className="tag">MATH · CARDS · CHAOS</div><div className="conn">● {connected?'SERVER CONNECTED':'READY TO CONNECT'}</div><label>YOUR NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)}/></label><button className="primary" onClick={onCreate}>HOST GAME</button>{hasSession&&<button className="secondary resumeBtn" onClick={onResume}>RESUME ROOM · {savedRoom}</button>}<div className="joinRow"><input placeholder="ROOM CODE" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())}/><button onClick={onJoin}>JOIN</button></div><button className="secondary" onClick={onSettings}>SETTINGS</button><div className="menuHelp">Host creates a room. New players can join only before the game starts. Players who already belong to this room can reconnect after the game has started.</div></div></div>}
+
+function ModeSetup({type,onStart,onClose}){
+  const practice=type==='practice';
+  const [bots,setBots]=useState(3);
+  const [targetScore,setTargetScore]=useState(11);
+  const [playerSeconds,setPlayerSeconds]=useState(120);
+  const [target,setTarget]=useState(24);
+  return <div className="overlay"><div className="modeSetup">
+    <div className="setTitle"><span>{practice?'PRACTICE MODE':'SINGLEPLAYER'}</span><button onClick={onClose}>✕</button></div>
+    <div className="modeSetupHero">{practice?'Build expressions against your own target.':'Play a full Combine game against local bot players.'}</div>
+    {practice ? <>
+      <label>CUSTOM TARGET<input type="number" min="1" max="9999" value={target} onChange={e=>setTarget(Math.max(1,Math.min(9999,Number(e.target.value)||1)))}/></label>
+      <p className="settingsHint">Choose any positive target. The target stays fixed while you practice.</p>
+    </> : <>
+      <label>BOTS<input type="range" min="1" max="5" value={bots} onChange={e=>setBots(Number(e.target.value))}/><div className="setupValue">{bots} BOT{bots>1?'S':''} · {bots+1} PLAYERS</div></label>
+      <div className="grid2"><label>GAME TARGET<input type="number" min="1" value={targetScore} onChange={e=>setTargetScore(Math.max(1,Number(e.target.value)||1))}/></label><label>PLAYER TIMER · SEC<input type="number" min="5" value={playerSeconds} onChange={e=>setPlayerSeconds(Math.max(5,Number(e.target.value)||5))}/></label></div>
+      <p className="settingsHint">Bots play automatically. Your turns follow the normal Combine rules.</p>
+    </>}
+    <button className="primary" onClick={()=>practice?onStart({target}):onStart({bots,targetScore,playerSeconds})}>{practice?'START PRACTICE →':'START SINGLEPLAYER →'}</button>
+    <button className="cancel" onClick={onClose}>CANCEL</button>
+  </div></div>;
+}
+
+function PracticeGame({initialTarget,playerName,onExit,ui}){
+  const [game,setGame]=useState(()=>makePracticeGame(initialTarget,playerName));
+  const [selected,setSelected]=useState([]);
+  const [message,setMessage]=useState('DRAW ONE CARD TO BEGIN');
+  const [solved,setSolved]=useState(false);
+  const me=game.players[0];
+  const hand=Array.isArray(me?.hand)?me.hand:[];
+  const selectedCards=selected.map(i=>hand[i]).filter(Boolean);
+  const value=selected.length?evalLocal(selectedCards):null;
+  const correct=value!==null&&Math.abs(value-game.roundState.target)<1e-9;
+
+  function draw(deckName){
+    if(game.roundState.drawnThisTurn){setMessage('DRAW COMPLETE · RESET OR TRY YOUR EXPRESSION');return;}
+    const deck=deckName==='operator'?game.operatorDeck:game.numberDeck;
+    if(!deck.length){setMessage('THAT DECK IS EMPTY');return;}
+    const card=deck[0];
+    setGame(g=>({...g,players:[{...g.players[0],hand:[...g.players[0].hand,card]}],numberDeck:deckName==='number'?g.numberDeck.slice(1):g.numberDeck,operatorDeck:deckName==='operator'?g.operatorDeck.slice(1):g.operatorDeck,roundState:{...g.roundState,drawnThisTurn:true}}));
+    setMessage(`DREW ${card} · BUILD TOWARD ${game.roundState.target}`);
+  }
+  function pass(){
+    setSelected([]);setSolved(false);setMessage('TURN RESET · DRAW AGAIN');setGame(g=>({...g,roundState:{...g.roundState,drawnThisTurn:false}}));
+  }
+  function clearHand(){
+    setSelected([]);setSolved(false);setGame(g=>({...g,players:[{...g.players[0],hand:[]}],numberDeck:makeLocalNumberDeck(),operatorDeck:makeLocalOperatorDeck(),roundState:{...g.roundState,drawnThisTurn:false,events:[]}}));setMessage('HAND CLEARED · DRAW ONE CARD');
+  }
+  function attempt(){
+    if(!game.roundState.drawnThisTurn){setMessage('DRAW EXACTLY ONE CARD FIRST');return;}
+    if(!selected.length){setMessage('SELECT CARDS TO BUILD AN EXPRESSION');return;}
+    if(correct){setSolved(true);setMessage(`TARGET HIT · ${value} = ${game.roundState.target}`);setGame(g=>({...g,roundState:{...g.roundState,events:[...g.roundState.events,{type:'practiceHit',playerId:'human',points:1,ts:Date.now()}]}}));}
+    else setMessage(value===null?'INVALID EXPRESSION':`EXPRESSION = ${value} · TARGET = ${game.roundState.target}`);
+  }
+  const targetDigits=game.roundState.targetCards||targetCardsFromNumber(game.roundState.target);
+  return <div className={`app tabletopApp ${ui?.animations?'':'no-anim'}`} style={getShellStyle(ui)}>
+    <header className="topbar tableTopbar"><div className="brand">COMBINE <span>PRACTICE</span></div><div className="tableTopCenter">CUSTOM TARGET <b>{game.roundState.target}</b></div><div className="topBtns"><button className="leaveTop" onClick={onExit}>EXIT</button></div></header>
+    <main className="tableStage practiceStage"><div className="tableGlow"/><div className="tableSurface practiceSurface">
+      <div className="roundBadge">PRACTICE · SOLO</div>
+      <section className="tableCenter practiceCenter">
+        <div className="targetZone"><div className="targetLabel">YOUR TARGET</div><div className="targetCards">{targetDigits.map((c,i)=><div className="targetPhysicalCard" key={i}><span>{c}</span></div>)}</div><div className="targetNumber">{game.roundState.target}</div></div>
+        <div className="centerTimer practiceStatus"><div className="turnLabel">{solved?'TARGET COMPLETE':'PRACTICE MODE'}</div><div className="practiceMessage">{message}</div></div>
+        <div className="drawZone"><button className="drawPile numberPile" disabled={game.roundState.drawnThisTurn||!game.numberDeck.length} onClick={()=>draw('number')}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{game.numberDeck.length} LEFT</small></span></button><button className="drawPile operatorPile" disabled={game.roundState.drawnThisTurn||!game.operatorDeck.length} onClick={()=>draw('operator')}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{game.operatorDeck.length} LEFT</small></span></button></div><div className="drawHint">{game.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE CARD'}</div>
+      </section>
+      <div className="tableSeat seat-bottom isYou activeSeat"><div className="seatName"><span className="seatDot"/><b>YOU</b><em>PRACTICE</em></div><div className="seatAvatar"><span/><span/></div><div className="seatHand">{hand.map((c,i)=><button className={`card tableCard ${/\d/.test(c)?'num':'op'} ${selected.includes(i)?'sel':''}`} key={`${c}-${i}`} onClick={()=>setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])}>{c}</button>)}</div><div className="seatMeta">{hand.length} CARDS</div></div>
+      <div className="myDock"><div className="myExpression"><div className="exprPreview">{selected.length?selected.map(i=>hand[i]).join(' '):'SELECT CARDS TO BUILD'}</div>{selected.length>0&&<div className={`exprValue ${value===null?'bad':''}`}>{value===null?'INVALID':`= ${value}`}</div>}</div><div className="dockButtons"><button className="dockBtn" disabled={!selected.length} onClick={()=>setSelected(v=>v.slice(0,-1))}>UNDO</button><button className="dockBtn" disabled={!selected.length} onClick={()=>setSelected([])}>CLEAR</button><button className="dockBtn passBtn" onClick={pass}>RESET TURN</button><button className="dockBtn attemptBtn" onClick={attempt}>ATTEMPT</button><button className="dockBtn dhappaBtn" onClick={clearHand}>CLEAR HAND</button></div></div>
+      <div className="practiceRules">Practice uses the same card expression rules: adjacent number cards concatenate and BEDMAS applies.</div>
+    </div></main>
+  </div>;
+}
+
+function SingleplayerGame({initialGame,onExit,ui}){
+  const [game,setGame]=useState(initialGame);
+  const [selected,setSelected]=useState([]);
+  const [challengeSelected,setChallengeSelected]=useState([]);
+  const [targetPick,setTargetPick]=useState([]);
+  const [localNow,setLocalNow]=useState(Date.now());
+  const [message,setMessage]=useState('');
+  useEffect(()=>{const id=setInterval(()=>setLocalNow(Date.now()),100);return()=>clearInterval(id)},[]);
+  const players=game.players||[]; const me=players.find(p=>p.id==='human')||players[0];
+  const active=players.find(p=>p.id===game.roundState?.activeId)||null;
+  const isMyTurn=active?.id==='human' && game.phase==='turn' && !game.dhappa;
+  const myHand=Array.isArray(me?.hand)?me.hand:[];
+  const safeSelected=selected.filter(i=>Number.isInteger(i)&&i>=0&&i<myHand.length);
+  const liveValue=safeSelected.length?evalLocal(safeSelected.map(i=>myHand[i])):null;
+  const dh=game.dhappa;
+  const challengeTarget=dh ? players.find(p=>p.id===dh.targetId) : null;
+  const caller=dh ? players.find(p=>p.id===dh.callerId) : null;
+  const dhappaRemaining=dh?.expiresAt ? Math.max(0,(dh.expiresAt-localNow)/1000) : null;
+  const displayRemaining=p=>{if(!p)return 0;if(p.id===active?.id&&game.turnDeadlineAt&&game.phase==='turn'&&!game.dhappa)return Math.max(0,(game.turnDeadlineAt-localNow)/1000);return p.remainingTime||0};
+
+  function localAction(type,payload={}){
+    setGame(g=>{
+      const now=Date.now();
+
+      // Challenge actions are handled before the normal-turn guard because an
+      // active Dhappa intentionally pauses the turn.
+      if(type==='cancelChallenge'){
+        if(!g.dhappa) return g;
+        return {...g,dhappa:null,turnStartedAt:now,turnDeadlineAt:now+g.settings.playerSeconds*1000};
+      }
+      if(type==='failChallenge'){
+        if(!g.dhappa) return g;
+        const failingId=g.dhappa.mode==='callout'?g.dhappa.callerId:g.dhappa.targetId;
+        if(failingId!=='human') return g;
+        const failed=g.players.find(p=>p.id===failingId); if(!failed) return g;
+        return eliminateLocal({...g,dhappa:null},failed.id,failed.id,{type:'failed',playerId:failed.id,points:0});
+      }
+      if(type==='submitExpression'){
+        if(!g.dhappa) return g;
+        const caller2=g.players.find(p=>p.id===g.dhappa.callerId);
+        const target=g.players.find(p=>p.id===g.dhappa.targetId);
+        if(!caller2||!target||caller2.id!=='human') return g;
+        const sourceIndices=Array.isArray(payload.indices)?payload.indices:[];
+        const cards=sourceIndices.map(i=>target.hand?.[i]).filter(x=>x!==undefined);
+        const value=evalLocal(cards);
+        if(value===null||Math.abs(value-g.roundState.target)>1e-9){ return g; }
+        const mode=g.dhappa.mode;
+        const g2={...g,dhappa:null,turnStartedAt:null,turnDeadlineAt:null,roundState:{...g.roundState,drawnThisTurn:false}};
+        if(mode==='callout'){
+          const withPts={...g2,players:g2.players.map(p=>p.id===caller2.id?{...p,roundScore:p.roundScore+3}:p)};
+          return eliminateLocal(withPts,target.id,caller2.id,{type:'kick',playerId:caller2.id,targetId:target.id,points:3});
+        }
+        if(target.id!=='human') return g;
+        const pts=[5,3,2,1,1][g2.roundState.finishCount]??0;
+        const withPts={...g2,players:g2.players.map(p=>p.id===target.id?{...p,roundScore:p.roundScore+pts}:p),roundState:{...g2.roundState,finishCount:g2.roundState.finishCount+1}};
+        return eliminateLocal(withPts,target.id,target.id,{type:'win',playerId:target.id,points:pts});
+      }
+
+      if(g.phase!=='turn' || g.dhappa) return g;
+      const activeNow=g.players.find(p=>p.id===g.roundState.activeId);
+      if(!activeNow || activeNow.id!=='human') return g;
+
+      if(type==='draw'){
+        if(g.roundState.drawnThisTurn)return g;
+        const deck=payload.deck==='operator'?g.operatorDeck:g.numberDeck;
+        if(!deck.length)return g;
+        const card=deck[0];
+        return {...g,
+          players:g.players.map(p=>p.id==='human'?{...p,hand:[...p.hand,card]}:p),
+          numberDeck:payload.deck==='operator'?g.numberDeck:g.numberDeck.slice(1),
+          operatorDeck:payload.deck==='operator'?g.operatorDeck.slice(1):g.operatorDeck,
+          roundState:{...g.roundState,drawnThisTurn:true,events:[...g.roundState.events,{type:'draw',playerId:'human',deck:payload.deck,card,ts:now]}}
+        };
+      }
+      if(type==='pass') return advanceLocalTurn(g,'human');
+      if(type==='attempt') return {...g,dhappa:{mode:'attempt',targetId:'human',callerId:'human',startedAt:now,expiresAt:now+30000,seconds:30}};
+      if(type==='dhappa'){
+        const target=g.players.find(p=>p.id===payload.targetId);
+        if(!target||!target.alive||target.id==='human') return g;
+        return {...g,dhappa:{mode:'callout',targetId:target.id,callerId:'human',startedAt:now,expiresAt:now+30000,seconds:30}};
+      }
+      return g;
+    });
+  }
+
+  // Expire the active turn or a human challenge.
+  useEffect(()=>{
+    if(game.phase!=='turn') return;
+    if(game.dhappa){
+      if(localNow>=game.dhappa.expiresAt){
+        const failingId=game.dhappa.mode==='callout'?game.dhappa.callerId:game.dhappa.targetId;
+        localAction('failChallenge',{targetId:failingId});
+        setMessage(`${players.find(p=>p.id===failingId)?.name||'PLAYER'} TIMED OUT`);
+      }
+      return;
+    }
+    if(game.turnDeadlineAt && localNow>=game.turnDeadlineAt){
+      const id=game.roundState.activeId;
+      setGame(g=>eliminateLocal(g,id,id,{type:'timeout',playerId:id,points:0}));
+    }
+  },[localNow,game.phase,game.dhappa?.expiresAt,game.turnDeadlineAt,game.roundState?.activeId]);
+
+  // Bot AI: draw exactly one, then attempt if it can hit the target; otherwise pass.
+  useEffect(()=>{
+    if(game.phase!=='turn'||game.dhappa||active?.id==='human'||!active?.bot) return;
+    const botId=active.id; let cancelled=false;
+    const timer=setTimeout(()=>{
+      if(cancelled)return;
+      setGame(g=>{
+        if(g.phase!=='turn'||g.dhappa||g.roundState.activeId!==botId)return g;
+        const bot=g.players.find(p=>p.id===botId); if(!bot)return g;
+        const deckPick=Math.random()<0.58?'number':'operator'; const deck=deckPick==='number'?g.numberDeck:g.operatorDeck; if(!deck.length)return advanceLocalTurn(g,botId);
+        const card=deck[0];
+        const players2=g.players.map(p=>p.id===botId?{...p,hand:[...p.hand,card]}:p);
+        let next={...g,players:players2,numberDeck:deckPick==='number'?g.numberDeck.slice(1):g.numberDeck,operatorDeck:deckPick==='operator'?g.operatorDeck.slice(1):g.operatorDeck,roundState:{...g.roundState,drawnThisTurn:true,events:[...g.roundState.events,{type:'draw',playerId:botId,deck:deckPick,card,ts:Date.now()}]}};
+        const expr=findBotExpression(players2.find(p=>p.id===botId)?.hand||[],g.roundState.target);
+        if(expr){
+          const pts=[5,3,2,1,1][next.roundState.finishCount]??0;
+          const updated={...next,players:next.players.map(p=>p.id===botId?{...p,roundScore:p.roundScore+pts}:p),roundState:{...next.roundState,finishCount:next.roundState.finishCount+1,events:[...next.roundState.events,{type:'win',playerId:botId,points:pts,ts:Date.now()}]}};
+          setTimeout(()=>setMessage(`${bot.name} found ${expr.map(i=>players2.find(p=>p.id===botId).hand[i]).join(' ')} → ${g.roundState.target}`),0);
+          return eliminateLocal(updated,botId,botId,{});
+        }
+        return advanceLocalTurn(next,botId);
+      });
+    },900+Math.random()*900);
+    return()=>{cancelled=true;clearTimeout(timer)};
+  },[game.phase,game.dhappa,active?.id,game.roundState?.activeId]);
+
+  useEffect(()=>{if(game.phase==='roundSummary'||game.phase==='gameOver')setSelected([])},[game.phase,game.round]);
+  useEffect(()=>{if(game.phase==='roundSummary')setMessage('ROUND COMPLETE');},[game.phase]);
+
+  if(game.phase==='roundSummary') return <Summary state={game} onNext={()=>setGame(g=>beginLocalRound(g,g.round+1,null))}/>;
+  if(game.phase==='gameOver') return <GameOver state={game}/>;
+
+  const seatPlayers=[me,...players.filter(p=>p.id!==me.id)].filter(Boolean);
+  return <div className={`app tabletopApp ${ui?.animations?'':'no-anim'}`} style={getShellStyle(ui)}>
+    <header className="topbar tableTopbar"><div className="brand">COMBINE <span>SINGLEPLAYER</span></div><div className="tableTopCenter">ROUND <b>{game.round}</b><span>TARGET SCORE {game.settings.targetScore}</span></div><div className="topBtns"><button onClick={onExit}>EXIT</button></div></header>
+    {message&&<div className="toast">{message}</div>}
+    <main className="tableStage"><div className="tableGlow"/><div className="tableSurface">
+      <div className="tableCorners"/><div className="roundBadge">SINGLEPLAYER · {players.length-1} BOTS · TARGET SCORE {game.settings.targetScore}</div>
+      {seatPlayers.map((p,index)=>{const position=seatPosition(seatPlayers.length,index);const own=p.id==='human';const activeSeat=p.id===active?.id;const hand=p.hand||[];return <div key={p.id} className={`tableSeat seat-${position} ${activeSeat?'activeSeat':''} ${!p.alive?'isOut':''} ${own?'isYou':''}`} style={{'--seat-rotation':seatRotation(position),'--player-accent':p.color}}><div className="seatName"><span className="seatDot"/><b>{own?'YOU':p.name}</b>{activeSeat&&<em>TURN</em>}</div><div className="seatAvatar"><span/><span/></div><div className="seatHand">{hand.map((c,i)=>{const sel=own&&selected.includes(i);return <button key={`${p.id}-${i}-${c}`} className={`card tableCard ${/\d/.test(c)?'num':'op'} ${sel?'sel':''}`} disabled={!own||!isMyTurn||!!game.dhappa} onClick={()=>own&&setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])}>{c}</button>})}{!hand.length&&<span className="seatEmpty">EMPTY</span>}</div><div className="seatMeta">{p.alive?`${formatTime(displayRemaining(p))} · ${hand.length} CARDS`:'OUT · 0 PTS'}</div></div>})}
+      <section className="tableCenter"><div className="targetZone"><div className="targetLabel">ROUND TARGET</div><div className="targetCards">{game.roundState.targetCards.map((c,i)=><div className="targetPhysicalCard" key={i}><span>{c}</span></div>)}</div><div className="targetNumber">{game.roundState.target}</div></div><div className="centerTimer"><div className="turnLabel">{active?.id==='human'?'YOUR TURN':`${active?.name||'PLAYER'}'S TURN`}</div><div className="timerDigits">{formatTime(displayRemaining(active))}</div></div><div className="drawZone"><button className="drawPile numberPile" disabled={!isMyTurn||game.roundState.drawnThisTurn||!game.numberDeck.length} onClick={()=>localAction('draw',{deck:'number'})}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>NUMBER</b><small>{game.numberDeck.length} LEFT</small></span></button><button className="drawPile operatorPile" disabled={!isMyTurn||game.roundState.drawnThisTurn||!game.operatorDeck.length} onClick={()=>localAction('draw',{deck:'operator'})}><span className="pileBack"/><span className="pileBack back2"/><span className="pileFace"><b>OPERATOR</b><small>{game.operatorDeck.length} LEFT</small></span></button></div><div className="drawHint">{game.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW EXACTLY ONE CARD'}</div></section>
+      <aside className="tableScoreboard"><div className="hudHead"><b>SCOREBOARD</b><span>LOCAL</span></div>{[...players].sort((a,b)=>(b.score??0)-(a.score??0)).map(p=><div className={`hudPlayer ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><span className="hudDot" style={{background:p.color}}/><div><b>{p.id==='human'?'YOU':p.name}</b><small>{p.alive?`+${p.roundScore||0} THIS ROUND`:'OUT'}</small></div><strong>{p.score||0}</strong></div>)}</aside>
+      <div className="myDock"><div className="myExpression"><div className="exprPreview">{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</div>{safeSelected.length>0&&<div className={`exprValue ${liveValue===null?'bad':''}`}>{liveValue===null?'INVALID':`= ${liveValue}`}</div>}</div><div className="dockButtons"><button className="dockBtn" disabled={!safeSelected.length} onClick={()=>setSelected(v=>v.slice(0,-1))}>UNDO</button><button className="dockBtn" disabled={!safeSelected.length} onClick={()=>setSelected([])}>CLEAR</button><button className="dockBtn passBtn" disabled={!isMyTurn||!game.roundState.drawnThisTurn} onClick={()=>{setSelected([]);localAction('pass')}}>PASS</button><button className="dockBtn attemptBtn" disabled={!isMyTurn||!game.roundState.drawnThisTurn||!safeSelected.length} onClick={()=>{setChallengeSelected([]);localAction('attempt')}}>ATTEMPT</button><button className="dockBtn dhappaBtn" disabled={!isMyTurn||players.filter(p=>p.alive&&p.id!=='human').length===0} onClick={()=>setTargetPick(players.filter(p=>p.alive&&p.id!=='human').map(p=>p.id))}>DHAPPA</button></div>{targetPick.length>0&&<div className="tableChooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!=='human').map(p=><button key={p.id} onClick={()=>{setTargetPick([]);localAction('dhappa',{targetId:p.id})}}><span style={{background:p.color}}/>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}</div>
+    </div></main>
+    {game.dhappa&&<ChallengeErrorBoundary onClose={()=>localAction('cancelChallenge')}><ChallengeModal state={game} now={localNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={i=>setChallengeSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i])} onUndo={()=>setChallengeSelected(v=>v.slice(0,-1))} onClear={()=>setChallengeSelected([])} onSubmit={()=>localAction('submitExpression',{indices:challengeSelected})} onCancel={(reason)=>localAction(reason==='fail'?'failChallenge':'cancelChallenge')} /></ChallengeErrorBoundary>}
+  </div>;
+}
+
+function Menu({name,setName,roomCode,setRoomCode,onCreate,onJoin,onResume,connected,hasSession,savedRoom,onSettings,onSingleplayer,onPractice}){return <div className="menu"><div className="menuPanel"><div className="logo">COMBINE</div><div className="tag">MATH · CARDS · CHAOS</div><div className="conn">● {connected?'SERVER CONNECTED':'READY TO CONNECT'}</div><label>YOUR NAME<input value={name} maxLength={20} onChange={e=>setName(e.target.value)}/></label><button className="primary" onClick={onCreate}>HOST GAME</button><div className="modeGrid"><button className="modeBtn" onClick={onSingleplayer}><b>SINGLEPLAYER</b><small>PLAY VS BOTS</small></button><button className="modeBtn practiceModeBtn" onClick={onPractice}><b>PRACTICE</b><small>SOLO · CUSTOM TARGET</small></button></div>{hasSession&&<button className="secondary resumeBtn" onClick={onResume}>RESUME ROOM · {savedRoom}</button>}<div className="joinRow"><input placeholder="ROOM CODE" value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())}/><button onClick={onJoin}>JOIN</button></div><button className="secondary" onClick={onSettings}>SETTINGS</button><div className="menuHelp">Host creates an online room. Singleplayer runs locally with bots. Practice is solo with a target you choose.</div></div></div>}
 function Lobby({state,me,onStart,onLeave}){
   const [qr,setQr]=useState('');
   const [copied,setCopied]=useState(false);
