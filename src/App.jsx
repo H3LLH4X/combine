@@ -309,18 +309,35 @@ function findBotExpression(hand,target){
   return found;
 }
 
+function localEffectiveRemaining(game, player, now=Date.now()){
+  if(!player) return 0;
+  if(game?.phase==='turn' && !game?.dhappa && game?.turnStartedAt && game?.roundState?.activeId===player.id){
+    return Math.max(0, Number(player.remainingTime||0) - Math.max(0, now-game.turnStartedAt)/1000);
+  }
+  return Math.max(0, Number(player.remainingTime||0));
+}
+
 function advanceLocalTurn(game, actorId){
   const alive=game.players.filter(p=>p.alive);
   if(alive.length<=1) return game;
-  const pos=alive.findIndex(p=>p.id===actorId);
-  const step=game.settings.direction==='clockwise'?1:-1;
-  const next=alive[(Math.max(0,pos)+step+alive.length)%alive.length];
   const now=Date.now();
+  const players=game.players.map(p=>
+    p.id===actorId && p.alive
+      ? {...p,remainingTime:localEffectiveRemaining(game,p,now)}
+      : p
+  );
+  const nextAlive=players.filter(p=>p.alive);
+  if(nextAlive.length<=1) return {...game,players};
+  const pos=nextAlive.findIndex(p=>p.id===actorId);
+  const step=game.settings.direction==='clockwise'?1:-1;
+  const next=nextAlive[(Math.max(0,pos)+step+nextAlive.length)%nextAlive.length];
+  const nextRemaining=Math.max(0,Number(next.remainingTime||0));
   return {
     ...game,
+    players,
     roundState:{...game.roundState,activeId:next.id,drawnThisTurn:false},
     turnStartedAt:now,
-    turnDeadlineAt:now+(next.id==='human'?game.settings.playerSeconds*1000:Math.min(game.settings.playerSeconds,8)*1000),
+    turnDeadlineAt:now+nextRemaining*1000,
   };
 }
 
@@ -924,7 +941,13 @@ function SingleplayerGame({initialGame,onExit,ui}){
       // active Dhappa intentionally pauses the turn.
       if(type==='cancelChallenge'){
         if(!g.dhappa) return g;
-        return {...g,dhappa:null,turnStartedAt:now,turnDeadlineAt:now+g.settings.playerSeconds*1000};
+        const activeId=g.roundState?.activeId;
+        const activePlayer=g.players.find(p=>p.id===activeId);
+        const remaining=activePlayer ? localEffectiveRemaining(g,activePlayer,now) : 0;
+        const players=activePlayer
+          ? g.players.map(p=>p.id===activeId?{...p,remainingTime:remaining}:p)
+          : g.players;
+        return {...g,players,dhappa:null,turnStartedAt:now,turnDeadlineAt:now+remaining*1000};
       }
       if(type==='failChallenge'){
         if(!g.dhappa) return g;
@@ -973,11 +996,19 @@ function SingleplayerGame({initialGame,onExit,ui}){
         };
       }
       if(type==='pass') return advanceLocalTurn(g,'human');
-      if(type==='attempt') return {...g,dhappa:{mode:'attempt',targetId:'human',callerId:'human',startedAt:now,expiresAt:now+30000,seconds:30}};
+      if(type==='attempt'){
+        const activePlayer=g.players.find(p=>p.id===g.roundState.activeId);
+        const remaining=activePlayer ? localEffectiveRemaining(g,activePlayer,now) : 0;
+        const players=activePlayer ? g.players.map(p=>p.id===activePlayer.id?{...p,remainingTime:remaining}:p) : g.players;
+        return {...g,players,dhappa:{mode:'attempt',targetId:'human',callerId:'human',startedAt:now,expiresAt:now+30000,seconds:30},turnStartedAt:null,turnDeadlineAt:null};
+      }
       if(type==='dhappa'){
         const target=g.players.find(p=>p.id===payload.targetId);
         if(!target||!target.alive||target.id==='human') return g;
-        return {...g,dhappa:{mode:'callout',targetId:target.id,callerId:'human',startedAt:now,expiresAt:now+30000,seconds:30}};
+        const activePlayer=g.players.find(p=>p.id===g.roundState.activeId);
+        const remaining=activePlayer ? localEffectiveRemaining(g,activePlayer,now) : 0;
+        const players=activePlayer ? g.players.map(p=>p.id===activePlayer.id?{...p,remainingTime:remaining}:p) : g.players;
+        return {...g,players,dhappa:{mode:'callout',targetId:target.id,callerId:'human',startedAt:now,expiresAt:now+30000,seconds:30},turnStartedAt:null,turnDeadlineAt:null};
       }
       return g;
     });

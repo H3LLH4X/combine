@@ -395,8 +395,11 @@ class CombineRoom extends DurableObject {
     }
     const active = this.active();
     if (active && this.room.turnStartedAt) {
-      // If the active player has already consumed part of their clock, remainingTime is the authoritative base.
-      await this.ctx.storage.setAlarm(this.room.turnStartedAt + active.remainingTime*1000);
+      // Schedule from the player's CURRENT remaining time, not from the original turn start.
+      // This preserves the total per-player clock across multiple turns.
+      const now = Date.now();
+      const remaining = this.effectiveRemaining(active, now);
+      await this.ctx.storage.setAlarm(now + remaining*1000);
     }
   }
 
@@ -450,6 +453,11 @@ class CombineRoom extends DurableObject {
       remainingTime: this.effectiveRemaining(p, now),
       online: online.has(p.id)
     }));
+    const active = this.active();
+    const activeRemaining = active ? this.effectiveRemaining(active, now) : null;
+    const turnDeadlineAt = (active && this.room.phase === 'turn' && !this.room.dhappa && this.room.turnStartedAt)
+      ? now + Math.max(0, activeRemaining || 0)*1000
+      : null;
     return {
       serverNow: now,
       code: this.room.code,
@@ -469,7 +477,7 @@ class CombineRoom extends DurableObject {
         winningSnapshot:this.room.roundState.winningSnapshot ? {...this.room.roundState.winningSnapshot,hand:[...(this.room.roundState.winningSnapshot.hand||[])],expression:[...(this.room.roundState.winningSnapshot.expression||[])]} : null,
         numberCardsLeft:this.room.numberDeck.length,
         operatorCardsLeft:this.room.operatorDeck.length,
-        turnDeadlineAt:this.room.turnStartedAt && !this.room.dhappa ? this.room.turnStartedAt + (this.active()?.remainingTime||0)*1000 : null
+        turnDeadlineAt
       } : null,
       dhappa:this.room.dhappa ? {...this.room.dhappa} : null,
       me:viewerId
