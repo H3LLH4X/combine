@@ -167,7 +167,7 @@ export function findExpressionTokens(hand, target, maxLen = 6, nodeLimit = 25000
   return found ? found.map(i=>cards[i]) : [];
 }
 
-class CombineRoom extends DurableObject {
+export class CombineRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
