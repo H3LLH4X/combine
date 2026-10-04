@@ -226,6 +226,15 @@ function normalizeState(raw){
 
 const LOCAL_COLORS = ['#ff4fd8','#44f7ff','#ffd447','#72ffb6','#ff6b7a','#a778ff'];
 
+function shuffle(items){
+  const arr=Array.isArray(items)?items.slice():[];
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr;
+}
+
 function localId(prefix='p'){
   try { if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`; } catch {}
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
