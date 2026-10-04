@@ -914,7 +914,7 @@ function SingleplayerGame({initialGame,onExit,ui}){
           players:g.players.map(p=>p.id==='human'?{...p,hand:[...p.hand,card]}:p),
           numberDeck:payload.deck==='operator'?g.numberDeck:g.numberDeck.slice(1),
           operatorDeck:payload.deck==='operator'?g.operatorDeck.slice(1):g.operatorDeck,
-          roundState:{...g.roundState,drawnThisTurn:true,events:[...g.roundState.events,{type:'draw',playerId:'human',deck:payload.deck,card,ts:now]}}
+          roundState:{...g.roundState,drawnThisTurn:true,events:[...g.roundState.events,{type:'draw',playerId:'human',deck:payload.deck,card,ts:now}]}
         };
       }
       if(type==='pass') return advanceLocalTurn(g,'human');
