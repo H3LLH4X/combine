@@ -215,6 +215,13 @@ function normalizeState(raw){
       events:Array.isArray(rs.events) ? rs.events : [],
       drawnThisTurn:Boolean(rs.drawnThisTurn),
       finishCount:Number.isFinite(Number(rs.finishCount)) ? Number(rs.finishCount) : 0,
+      winningSnapshot: rs.winningSnapshot && typeof rs.winningSnapshot==='object' ? {
+        playerId:rs.winningSnapshot.playerId ? String(rs.winningSnapshot.playerId) : null,
+        playerName:rs.winningSnapshot.playerName ? String(rs.winningSnapshot.playerName) : '',
+        hand:Array.isArray(rs.winningSnapshot.hand) ? rs.winningSnapshot.hand.map(x=>String(x)) : [],
+        expression:Array.isArray(rs.winningSnapshot.expression) ? rs.winningSnapshot.expression.map(x=>String(x)) : [],
+        target:Number.isFinite(Number(rs.winningSnapshot.target)) ? Number(rs.winningSnapshot.target) : null,
+      } : null,
     } : null,
     dhappa:raw.dhappa && typeof raw.dhappa==='object' ? {
       ...raw.dhappa,
@@ -319,10 +326,21 @@ function advanceLocalTurn(game, actorId){
 
 function finishLocalRound(game){
   const scored=game.players.map(p=>({...p,score:(p.score||0)+(p.roundScore||0)}));
+  const survivor=scored.find(p=>p.alive) || scored[0] || null;
+  const survivorHand=Array.isArray(survivor?.hand) ? survivor.hand.slice() : [];
+  const survivorExprIdx=survivor ? findBotExpression(survivorHand,game.roundState.target) : null;
+  const winningSnapshot=survivor ? {
+    playerId:survivor.id,
+    playerName:survivor.name,
+    hand:survivorHand,
+    expression:survivorExprIdx ? survivorExprIdx.map(i=>survivorHand[i]) : [],
+    target:game.roundState.target
+  } : null;
   const history={
     round:game.round,
     target:game.roundState.target,
-    scores:scored.map(p=>({id:p.id,roundScore:p.roundScore,total:p.score}))
+    scores:scored.map(p=>({id:p.id,roundScore:p.roundScore,total:p.score})),
+    winningSnapshot
   };
   const winner=scored.find(p=>p.score>=game.settings.targetScore);
   return {
@@ -331,6 +349,7 @@ function finishLocalRound(game){
     phase:winner?'gameOver':'roundSummary',
     winnerId:winner?.id||null,
     roundHistory:[...(game.roundHistory||[]),history],
+    roundState:{...game.roundState,winningSnapshot},
     turnStartedAt:null,
     turnDeadlineAt:null,
     dhappa:null,
@@ -651,6 +670,13 @@ function CombineApp(){
   }
   async function startGame(){await send({type:'startGame'});}
   function act(type,payload={}){send({type,...payload})}
+  function leaveOnlineToMenu(){
+    try{localStorage.removeItem('combine-session')}catch{}
+    act('leaveRoom');
+    setSession(null);
+    setState(null);
+    setView('menu');
+  }
   function toggleSelected(i){setSelected(s=>{const cur=Array.isArray(s)?s:[];return cur.includes(i)?cur.filter(x=>x!==i):[...cur,i]})}
   function toggleChallenge(i){setChallengeSelected(s=>{const cur=Array.isArray(s)?s:[];return cur.includes(i)?cur.filter(x=>x!==i):[...cur,i]})}
   function undoSelected(){setSelected(s=>s.slice(0,-1));setExpressionError('')}
@@ -671,8 +697,8 @@ function CombineApp(){
     {showSettings&&<Settings settings={settings} setSettings={setSettings} name={name} setName={setName} ui={ui} updateUi={updateUi} allowGameplayEdit={!state} onClose={()=>setShowSettings(false)} onReset={()=>{setUi({...DEFAULT_UI});setName('Player')}} />}
   </div>;
   if(view==='lobby') return <Lobby state={state} me={me} onStart={startGame} onLeave={()=>act('leaveRoom')} />;
-  if(view==='roundSummary') return <Summary state={state} onNext={()=>{if(me?.id===state.hostPlayerId)act('nextRound')}} />;
-  if(view==='gameOver') return <GameOver state={state} />;
+  if(view==='roundSummary') return <Summary state={state} onNext={()=>{if(me?.id===state.hostPlayerId)act('nextRound')}} onExit={leaveOnlineToMenu} />;
+  if(view==='gameOver') return <GameOver state={state} onExit={leaveOnlineToMenu} />;
 
   function leaveRoom(){
     setShowSettings(false);
@@ -1010,7 +1036,7 @@ function SingleplayerGame({initialGame,onExit,ui}){
             dhappa:{mode:'callout',targetId:target.id,callerId:botId,startedAt:Date.now(),expiresAt:Date.now()+30000,seconds:30},
             turnStartedAt:null,
             turnDeadlineAt:null,
-            roundState:{...next.roundState,drawnThisTurn:false,events:[...next.roundState.events,{type:'dhappa',playerId:botId,targetId:target.id,points:0,ts:Date.now(),auto:true}]}
+            roundState:{...next.roundState,drawnThisTurn:false,events:[...next.roundState.events,{type:'dhappa',playerId:botId,targetId:target.id,points:0,ts:Date.now(),auto:true,expression:targetHit.expr.map(i=>target.hand[i]),hand:(target.hand||[]).slice(),target:g.roundState.target}]}
           };
         }
 
@@ -1020,7 +1046,7 @@ function SingleplayerGame({initialGame,onExit,ui}){
           const pts=PLACE_POINTS[next.roundState.finishCount]??0;
           const updated={...next,
             players:next.players.map(p=>p.id===botId?{...p,roundScore:p.roundScore+pts}:p),
-            roundState:{...next.roundState,finishCount:next.roundState.finishCount+1,events:[...next.roundState.events,{type:'win',playerId:botId,points:pts,ts:Date.now()}]}
+            roundState:{...next.roundState,finishCount:next.roundState.finishCount+1,events:[...next.roundState.events,{type:'win',playerId:botId,points:pts,ts:Date.now(),expression:expr.map(i=>botAfterDraw.hand[i]),hand:(botAfterDraw.hand||[]).slice(),target:g.roundState.target}]}
           };
           setTimeout(()=>setMessage(`${bot.name} found ${expr.map(i=>botAfterDraw.hand[i]).join(' ')} → ${g.roundState.target} · +${pts}`),0);
           return eliminateLocal(updated,botId,botId,{});
@@ -1049,7 +1075,7 @@ function SingleplayerGame({initialGame,onExit,ui}){
             turnStartedAt:null,
             turnDeadlineAt:null,
             players:g.players.map(p=>p.id===caller.id?{...p,roundScore:(p.roundScore||0)+3}:p),
-            roundState:{...g.roundState,drawnThisTurn:false,events:[...g.roundState.events,{type:'kick',playerId:caller.id,targetId:target.id,points:3,ts:Date.now(),auto:true}]}
+            roundState:{...g.roundState,drawnThisTurn:false,events:[...g.roundState.events,{type:'kick',playerId:caller.id,targetId:target.id,points:3,ts:Date.now(),auto:true,expression:expr.map(i=>target.hand[i]),hand:(target.hand||[]).slice(),target:g.roundState.target}]}
           };
           setTimeout(()=>setMessage(`${caller.name} called DHAPPA on ${target.name} · ${expr.map(i=>target.hand[i]).join(' ')} → ${g.roundState.target} · +3`),0);
           return eliminateLocal(withPts,target.id,caller.id,{});
@@ -1065,8 +1091,8 @@ function SingleplayerGame({initialGame,onExit,ui}){
   useEffect(()=>{if(game.phase==='roundSummary'||game.phase==='gameOver')setSelected([])},[game.phase,game.round]);
   useEffect(()=>{if(game.phase==='roundSummary')setMessage('ROUND COMPLETE');},[game.phase]);
 
-  if(game.phase==='roundSummary') return <Summary state={game} onNext={()=>setGame(g=>beginLocalRound(g,g.round+1,null))}/>;
-  if(game.phase==='gameOver') return <GameOver state={game}/>;
+  if(game.phase==='roundSummary') return <Summary state={game} onNext={()=>setGame(g=>beginLocalRound(g,g.round+1,null))} onExit={onExit}/>;
+  if(game.phase==='gameOver') return <GameOver state={game} onExit={onExit}/>;
 
   const seatPlayers=[me,...players.filter(p=>p.id!==me.id)].filter(Boolean);
   return <div className={`app tabletopApp ${ui?.animations?'':'no-anim'}`} style={getShellStyle(ui)}>
@@ -1249,7 +1275,25 @@ function Settings({settings,setSettings,name,setName,ui,updateUi,allowGameplayEd
   </div>;
 }
 
-function Summary({state,onNext}){
+function WinningSnapshot({state}){
+  const snap=state?.roundState?.winningSnapshot || (Array.isArray(state?.roundHistory) ? state.roundHistory[state.roundHistory.length-1]?.winningSnapshot : null) || null;
+  const fallback=state?.players?.find(p=>p.alive) || state?.players?.[0] || null;
+  const hand=Array.isArray(snap?.hand) ? snap.hand : (Array.isArray(fallback?.hand)?fallback.hand:[]);
+  const expression=Array.isArray(snap?.expression) ? snap.expression : [];
+  const name=snap?.playerName || fallback?.name || 'LAST PLAYER STANDING';
+  const target=snap?.target ?? state?.roundState?.target ?? (Array.isArray(state?.roundHistory) ? state.roundHistory[state.roundHistory.length-1]?.target : null) ?? '—';
+  return <section className="winningSnapshot">
+    <div className="winningTitle">WINNING HAND</div>
+    <div className="winningPlayer">{String(name).toUpperCase()}</div>
+    <div className="winningCards">
+      {hand.length ? hand.map((c,i)=><div key={`${c}-${i}`} className={`card tableCard snapshotCard ${/\d/.test(String(c))?'num':'op'}`}>{c}</div>) : <span className="snapshotEmpty">NO CARDS</span>}
+    </div>
+    <div className="winningExprLabel">WINNING EXPRESSION · TARGET {target}</div>
+    <div className="winningExpression">{expression.length ? expression.join(' ') : 'NO VALID EXPRESSION FOUND FROM THE FINAL HAND'}</div>
+  </section>;
+}
+
+function Summary({state,onNext,onExit}){
   const rows=[...(state?.players||[])].sort((a,b)=>(b.roundScore??0)-(a.roundScore??0)||(b.score??0)-(a.score??0));
   const isHost=state?.me===state?.hostPlayerId;
   return <div className="summary">
@@ -1257,35 +1301,35 @@ function Summary({state,onNext}){
       <div className="trophy">🏆</div>
       <div className="eyebrow">ROUND COMPLETE</div>
       <h1>ROUND {state?.round}</h1>
-      <div className="winnerScore">TARGET {state?.roundState?.target ?? '—'}</div>
+      <div className="winnerScore">TARGET {state?.roundState?.target ?? (Array.isArray(state?.roundHistory) ? state.roundHistory[state.roundHistory.length-1]?.target : null) ?? '—'}</div>
+      <WinningSnapshot state={state}/>
+      <div className="leaderboardTitle">LEADERBOARD</div>
       {rows.map((p,i)=><div className="summaryRow" key={p.id}>
-        <span>#{i+1}</span>
-        <b>{p.name}</b>
-        <strong>+{p.roundScore??0}</strong>
-        <em>{p.score??0}</em>
+        <span>#{i+1}</span><b>{p.name}</b><strong>+{p.roundScore??0}</strong><em>{p.score??0}</em>
       </div>)}
-      <button className="primary" disabled={!isHost} onClick={onNext}>
-        {isHost?'CONTINUE TO NEXT ROUND →':'WAITING FOR HOST'}
-      </button>
+      <div className="summaryActions">
+        <button className="primary" disabled={!isHost} onClick={onNext}>{isHost?'CONTINUE TO NEXT ROUND →':'WAITING FOR HOST'}</button>
+        <button className="secondary exitSummary" onClick={onExit}>EXIT TO MENU</button>
+      </div>
     </div>
   </div>;
 }
 
-function GameOver({state}){
-  const winner=state?.players?.find(p=>p.id===state?.winnerId);
+function GameOver({state,onExit}){
+  const winner=state?.players?.find(p=>p.id===state?.winnerId) || state?.players?.find(p=>p.alive);
   const rows=[...(state?.players||[])].sort((a,b)=>(b.score??0)-(a.score??0));
   return <div className="summary">
     <div className="summaryCard">
       <div className="trophy">🏆</div>
-      <div className="eyebrow">GAME OVER</div>
+      <div className="eyebrow">GAME OVER · WINNER</div>
       <h1>{winner?.name||'WINNER'}</h1>
       <div className="winnerScore">FINAL SCORE · {winner?.score??0}</div>
+      <WinningSnapshot state={state}/>
+      <div className="leaderboardTitle">FINAL LEADERBOARD</div>
       {rows.map((p,i)=><div className="summaryRow" key={p.id}>
-        <span>#{i+1}</span>
-        <b>{p.name}</b>
-        <strong>{p.score??0}</strong>
-        <em>PTS</em>
+        <span>#{i+1}</span><b>{p.name}</b><strong>{p.score??0}</strong><em>PTS</em>
       </div>)}
+      <button className="secondary exitSummary" onClick={onExit}>EXIT TO MENU</button>
     </div>
   </div>;
 }

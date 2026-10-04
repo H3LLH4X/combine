@@ -138,7 +138,36 @@ function evaluateExpression(tokens) {
   return {valid:true,value:values[0]};
 }
 
-export class CombineRoom extends DurableObject {
+export function findExpressionTokens(hand, target, maxLen = 6, nodeLimit = 250000) {
+  const cards = Array.isArray(hand) ? hand : [];
+  if (cards.length < 3) return [];
+  const n = cards.length;
+  const order = Array.from({length:n},(_,i)=>i).sort((a,b)=>Number(/^\d$/.test(String(cards[b])))-Number(/^\d$/.test(String(cards[a]))));
+  const used = new Array(n).fill(false);
+  let nodes = 0, found = null;
+  const limit = Math.min(n, maxLen);
+  function dfs(seq, hasNum, hasOp) {
+    if (found || nodes++ >= nodeLimit) return;
+    if (seq.length >= 3 && hasNum && hasOp) {
+      const tokens = seq.map(i=>cards[i]);
+      const result = evaluateExpression(tokens);
+      if (result.valid && Math.abs(result.value - Number(target)) < 1e-9) { found = seq.slice(); return; }
+    }
+    if (seq.length >= limit) return;
+    for (const i of order) {
+      if (used[i]) continue;
+      used[i] = true; seq.push(i);
+      const isNum = /^\d$/.test(String(cards[i]));
+      dfs(seq, hasNum || isNum, hasOp || !isNum);
+      seq.pop(); used[i] = false;
+      if (found || nodes >= nodeLimit) return;
+    }
+  }
+  dfs([], false, false);
+  return found ? found.map(i=>cards[i]) : [];
+}
+
+class CombineRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
@@ -219,7 +248,8 @@ export class CombineRoom extends DurableObject {
       activeId: null,
       drawnThisTurn: false,
       finishCount: 0,
-      events: []
+      events: [],
+      winningSnapshot: null
     };
     for (const p of this.room.players) {
       p.alive = true;
@@ -321,11 +351,24 @@ export class CombineRoom extends DurableObject {
     this.room.phase = 'roundSummary';
     this.room.turnStartedAt = null;
     this.room.dhappa = null;
+    const survivor = this.alive()[0] || this.room.players.find(p=>p.alive) || null;
+    const existing = this.room.roundState.winningSnapshot;
+    if (survivor) {
+      const expr = existing?.playerId === survivor.id && Array.isArray(existing?.expression) ? existing.expression : findExpressionTokens(survivor.hand || [], this.room.roundState.target);
+      this.room.roundState.winningSnapshot = {
+        playerId: survivor.id,
+        playerName: survivor.name,
+        hand: [...(survivor.hand || [])],
+        expression: [...expr],
+        target: this.room.roundState.target
+      };
+    }
     for (const p of this.room.players) p.score += p.roundScore;
     this.room.roundHistory.push({
       round:this.room.round,
       target:this.room.roundState.target,
-      scores:this.room.players.map(p=>({id:p.id,roundScore:p.roundScore,total:p.score}))
+      scores:this.room.players.map(p=>({id:p.id,roundScore:p.roundScore,total:p.score})),
+      winningSnapshot:this.room.roundState.winningSnapshot ? {...this.room.roundState.winningSnapshot,hand:[...(this.room.roundState.winningSnapshot.hand||[])],expression:[...(this.room.roundState.winningSnapshot.expression||[])]} : null
     });
     const winner = this.room.players.find(p => p.score >= this.room.settings.targetScore);
     if (winner) {
@@ -423,6 +466,7 @@ export class CombineRoom extends DurableObject {
         drawnThisTurn:this.room.roundState.drawnThisTurn,
         finishCount:this.room.roundState.finishCount,
         events:this.room.roundState.events.slice(-30),
+        winningSnapshot:this.room.roundState.winningSnapshot ? {...this.room.roundState.winningSnapshot,hand:[...(this.room.roundState.winningSnapshot.hand||[])],expression:[...(this.room.roundState.winningSnapshot.expression||[])]} : null,
         numberCardsLeft:this.room.numberDeck.length,
         operatorCardsLeft:this.room.operatorDeck.length,
         turnDeadlineAt:this.room.turnStartedAt && !this.room.dhappa ? this.room.turnStartedAt + (this.active()?.remainingTime||0)*1000 : null
@@ -565,6 +609,14 @@ export class CombineRoom extends DurableObject {
       const challenge = this.room.dhappa;
       const actualCaller = this.player(submittingPlayerId);
       const target = this.player(expressionPlayerId);
+      this.room.roundState.winningSnapshot = {
+        playerId: expressionPlayer.id,
+        playerName: expressionPlayer.name,
+        hand: [...(expressionPlayer.hand||[])],
+        expression: [...cards],
+        target: this.room.roundState.target
+      };
+      this.addEvent({type:'expression',playerId:expressionPlayer.id,expression:[...cards],hand:[...(expressionPlayer.hand||[])],target:this.room.roundState.target});
       this.room.dhappa = null;
       this.room.roundState.drawnThisTurn = false;
       this.room.turnStartedAt = null;
