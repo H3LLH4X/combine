@@ -402,8 +402,9 @@ function CombineApp(){
   },[ui.sound,ui.volume]);
   const clockNow=localNow+serverOffset;
   const players=Array.isArray(state?.players) ? state.players : [];
+  const roundState=(state?.roundState && typeof state.roundState==='object') ? state.roundState : {target:0,targetCards:[],activeId:null,drawnThisTurn:false,numberCardsLeft:0,operatorCardsLeft:0,events:[]};
   const me=players.find(p=>p.id===state?.me) || null;
-  const active=players.find(p=>p.id===state?.roundState?.activeId) || null;
+  const active=players.find(p=>p.id===roundState.activeId) || null;
   const isMyTurn=!!me&&!!active&&me.id===active.id;
   const challengeTarget=state?.dhappa ? (players.find(p=>p.id===state.dhappa.targetId) || (state.dhappa.mode==='attempt' ? me : null)) : null;
   const caller=state?.dhappa ? players.find(p=>p.id===state.dhappa.callerId) || null : null;
@@ -413,9 +414,9 @@ function CombineApp(){
   const selectedCards=safeSelected.map(i=>myHand[i]);
   const liveValue=safeSelected.length?evalLocal(selectedCards):null;
   function displayRemaining(p){
-    if(!p||!state?.roundState) return 0;
-    if(p.id===state.roundState.activeId && state.roundState.turnDeadlineAt && state.phase==='turn' && !state.dhappa){
-      return Math.max(0,(state.roundState.turnDeadlineAt-clockNow)/1000);
+    if(!p||!roundState) return 0;
+    if(p.id===roundState.activeId && roundState.turnDeadlineAt && state.phase==='turn' && !state.dhappa){
+      return Math.max(0,(roundState.turnDeadlineAt-clockNow)/1000);
     }
     return p.remainingTime;
   }
@@ -495,16 +496,16 @@ function CombineApp(){
     <main className="game">
       <section className="board">
         <div className="roundInfo">ROUND {state.round} · GLOBAL TARGET <b>{state.settings.targetScore}</b></div>
-        <div className="targetCard"><span>ROUND TARGET</span><strong>{roundState.target}</strong><small>{state.roundState.targetCards.join(' + ')}</small></div>
+        <div className="targetCard"><span>ROUND TARGET</span><strong>{roundState.target}</strong><small>{Array.isArray(roundState.targetCards)?roundState.targetCards.join(' + '):''}</small></div>
         <div className="activeLine"><div className="activeName" style={{color:active?.color}}>{active?.name?.toUpperCase()}'S TURN</div><div className="bigTimer">{formatTime(displayRemaining(active))}</div></div>
         <div className="decks">
-          <button className="deck number" disabled={!isMyTurn||state.roundState.drawnThisTurn||!state.roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}><span>NUMBER</span><b>DRAW</b><small>{state.roundState.numberCardsLeft} LEFT</small></button>
-          <button className="deck operator" disabled={!isMyTurn||state.roundState.drawnThisTurn||!state.roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}><span>OPERATOR</span><b>DRAW</b><small>{state.roundState.operatorCardsLeft} LEFT</small></button>
+          <button className="deck number" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.numberCardsLeft} onClick={()=>act('draw',{deck:'number'})}><span>NUMBER</span><b>DRAW</b><small>{roundState.numberCardsLeft} LEFT</small></button>
+          <button className="deck operator" disabled={!isMyTurn||roundState.drawnThisTurn||!roundState.operatorCardsLeft} onClick={()=>act('draw',{deck:'operator'})}><span>OPERATOR</span><b>DRAW</b><small>{roundState.operatorCardsLeft} LEFT</small></button>
         </div>
         <div className="handWrap">
-          <div className="sectionHead"><span>{me?.name?.toUpperCase()}'S PUBLIC HAND</span><span>{me?.hand?.length||0} CARDS · {state.roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE'}</span></div>
+          <div className="sectionHead"><span>{me?.name?.toUpperCase()}'S PUBLIC HAND</span><span>{me?.hand?.length||0} CARDS · {roundState.drawnThisTurn?'DRAW COMPLETE':'DRAW ONE'}</span></div>
           <div className="hand">{myHand.map((c,i)=><button key={i} disabled={!isMyTurn||!!state.dhappa} onClick={()=>toggleSelected(i)} className={`card ${/\d/.test(c)?'num':'op'} ${selected.includes(i)?'sel':''}`}>{c}</button>)}{!me?.hand?.length&&<div className="empty">No cards yet.</div>}</div>
-          <div className="expression"><span>{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</span><div className="exprActions"><button className="smallBtn" disabled={!safeSelected.length} onClick={undoSelected}>UNDO</button><button className="smallBtn" disabled={!safeSelected.length} onClick={clearSelected}>CLEAR</button><button disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa||!safeSelected.length} onClick={()=>{setExpressionError('');act('attempt')}}>ATTEMPT</button></div></div>
+          <div className="expression"><span>{safeSelected.length?safeSelected.map(i=>myHand[i]).join(' '):'SELECT CARDS TO BUILD'}</span><div className="exprActions"><button className="smallBtn" disabled={!safeSelected.length} onClick={undoSelected}>UNDO</button><button className="smallBtn" disabled={!safeSelected.length} onClick={clearSelected}>CLEAR</button><button disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa||!safeSelected.length} onClick={()=>{setExpressionError('');act('attempt')}}>ATTEMPT</button></div></div>
           {safeSelected.length>0&&<div className={`liveResult ${liveValue===null?'bad':''}`}>
             {liveValue===null ? 'INVALID EXPRESSION' : `= ${liveValue}`}
           </div>}
@@ -520,13 +521,13 @@ function CombineApp(){
           </div>
         </div>
         <div className="controls">
-          <button className="pass" disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setSelected([]);act('pass')}}>PASS</button>
-          <button className="attempt" disabled={!isMyTurn||!state.roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setChallengeSelected([]);setExpressionError('');act('attempt')}}>ATTEMPT</button>
+          <button className="pass" disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setSelected([]);act('pass')}}>PASS</button>
+          <button className="attempt" disabled={!isMyTurn||!roundState.drawnThisTurn||!!state.dhappa} onClick={()=>{setChallengeSelected([]);setExpressionError('');act('attempt')}}>ATTEMPT</button>
           <button className="dhappa" disabled={!isMyTurn||players.filter(p=>p.alive&&p.id!==me?.id).length===0||!!state.dhappa} onClick={()=>{setTargetPick(players.filter(p=>p.alive&&p.id!==me?.id).map(p=>p.id));setSelected([]);setExpressionError('')}}>DHAPPA</button>
         </div>
         {targetPick.length>0&&<div className="chooser"><div className="chooserTitle">CALL OUT A PLAYER</div>{players.filter(p=>p.alive&&p.id!==me?.id).map(p=><button key={p.id} onClick={()=>{setTargetPick([]);act('dhappa',{targetId:p.id})}}><span style={{background:p.color}}></span>{p.name}<b>30s</b></button>)}<button className="cancel" onClick={()=>setTargetPick([])}>CANCEL</button></div>}
       </section>
-      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(Array.isArray(state.roundState.events)?state.roundState.events:[]).slice(-8).reverse().map((e,i)=>{const eventType=String(e?.type??'EVENT');const points=Number(e?.points)||0;return <div key={i}><b>{players.find(p=>p.id===e?.playerId)?.name||'Player'}</b><span>{eventType==='win'?'WON':eventType==='kick'?'KICKED':eventType.toUpperCase()}</span><em>{points>0?`+${points}`:'0'}</em></div>})}</div></aside>
+      <aside className="scoreboard"><div className="scoreTitle"><span>SCOREBOARD</span><span>ROUND {state.round}</span></div>{sorted.map(p=><div className={`score ${p.id===active?.id?'active':''} ${!p.alive?'out':''}`} key={p.id}><i style={{background:p.color}}></i><div><b>{p.name}</b><small>{p.alive?formatTime(displayRemaining(p)):'OUT'} · ROUND +{p.roundScore}</small></div><strong>{p.score}</strong></div>)}<div className="events">{(Array.isArray(roundState.events)?roundState.events:[]).slice(-8).reverse().map((e,i)=>{const eventType=String(e?.type??'EVENT');const points=Number(e?.points)||0;return <div key={i}><b>{players.find(p=>p.id===e?.playerId)?.name||'Player'}</b><span>{eventType==='win'?'WON':eventType==='kick'?'KICKED':eventType.toUpperCase()}</span><em>{points>0?`+${points}`:'0'}</em></div>})}</div></aside>
     </main>
 
     {state.dhappa&&<ChallengeErrorBoundary onClose={()=>act('cancelChallenge')}><ChallengeModal key={`${state.dhappa.startedAt||'dhappa'}-${state.dhappa.mode||'mode'}`} state={state} now={clockNow} dhappaRemaining={dhappaRemaining} me={me} target={challengeTarget} caller={caller} selection={challengeSelected} onToggle={toggleChallenge} onUndo={undoChallenge} onClear={clearChallenge} onSubmit={()=>{setExpressionError('');act('submitExpression',{tokens:(Array.isArray(challengeSelected)?challengeSelected:[]).map(index=>({index}))})}} onKick={()=>act('kick')} onCancel={(reason)=>{if(reason==='fail')act('failChallenge');else act('cancelChallenge')}} /></ChallengeErrorBoundary>}
